@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>58f74066-4fd1-4fbc-8db5-7a4eae83f2f5</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FluentValidation.AspNetCore" Version="11.3.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.9" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.13" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.9">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="7.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\POSSystem.Application\POSSystem.Application.csproj" />
+    <ProjectReference Include="..\POSSystem.Infrastructure\POSSystem.Infrastructure.csproj" />
+    <ProjectReference Include="..\POSSystem.Domain\POSSystem.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

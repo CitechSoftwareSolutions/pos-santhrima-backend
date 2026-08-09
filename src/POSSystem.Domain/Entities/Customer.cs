@@ -1,0 +1,17 @@
+using POSSystem.Domain.Common;
+
+namespace POSSystem.Domain.Entities;
+
+public class Customer : BaseEntity
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Phone { get; set; }
+    public string? Email { get; set; }
+    public string? Address { get; set; }
+
+    public int LoyaltyPoints { get; set; } = 0;
+    public decimal CreditBalance { get; set; } = 0;
+    public bool IsActive { get; set; } = true;
+
+    public ICollection<Sale> Sales { get; set; } = new List<Sale>();
+}
