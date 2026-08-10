@@ -154,3 +154,4 @@ D:\POS System\Backend\src\POSSystem.API\obj\Debug\net9.0\refint\POSSystem.API.dl
 D:\POS System\Backend\src\POSSystem.API\obj\Debug\net9.0\POSSystem.API.pdb
 D:\POS System\Backend\src\POSSystem.API\obj\Debug\net9.0\POSSystem.API.genruntimeconfig.cache
 D:\POS System\Backend\src\POSSystem.API\obj\Debug\net9.0\ref\POSSystem.API.dll
+D:\POS System\Backend\src\POSSystem.API\obj\Debug\net9.0\POSSystem.API.sourcelink.json

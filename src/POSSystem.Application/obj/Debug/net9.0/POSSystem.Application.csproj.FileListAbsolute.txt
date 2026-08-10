@@ -13,3 +13,4 @@ D:\POS System\Backend\src\POSSystem.Application\obj\Debug\net9.0\POSSystem.Appli
 D:\POS System\Backend\src\POSSystem.Application\obj\Debug\net9.0\refint\POSSystem.Application.dll
 D:\POS System\Backend\src\POSSystem.Application\obj\Debug\net9.0\POSSystem.Application.pdb
 D:\POS System\Backend\src\POSSystem.Application\obj\Debug\net9.0\ref\POSSystem.Application.dll
+D:\POS System\Backend\src\POSSystem.Application\obj\Debug\net9.0\POSSystem.Application.sourcelink.json

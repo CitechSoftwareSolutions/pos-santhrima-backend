@@ -17,3 +17,4 @@ D:\POS System\Backend\src\POSSystem.Infrastructure\obj\Debug\net9.0\refint\POSSy
 D:\POS System\Backend\src\POSSystem.Infrastructure\obj\Debug\net9.0\POSSystem.Infrastructure.pdb
 D:\POS System\Backend\src\POSSystem.Infrastructure\obj\Debug\net9.0\POSSystem.Infrastructure.genruntimeconfig.cache
 D:\POS System\Backend\src\POSSystem.Infrastructure\obj\Debug\net9.0\ref\POSSystem.Infrastructure.dll
+D:\POS System\Backend\src\POSSystem.Infrastructure\obj\Debug\net9.0\POSSystem.Infrastructure.sourcelink.json
