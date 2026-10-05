@@ -99,6 +99,11 @@ public class ProductService : IProductService
             throw new ValidationAppException($"Category '{request.CategoryId}' does not exist.");
         }
 
+        if (string.IsNullOrWhiteSpace(request.Sku))
+        {
+            request = request with { Sku = await GenerateNextSkuAsync(request.CategoryId) };
+        }
+
         var skuTaken = await _db.Products.AnyAsync(p => p.Sku == request.Sku);
         if (skuTaken)
         {
@@ -322,4 +327,46 @@ public class ProductService : IProductService
             .Select(t => new PriceTierDto(t.Id, t.Quantity, t.RetailPrice, t.WholesalePrice, t.SpecialPrice))
             .ToList(),
         PromotionCalculator.GetActivePromotion(p.Promotions));
+
+    public async Task<string> GenerateNextSkuAsync(Guid categoryId)
+    {
+        var category = await _db.Categories.FirstOrDefaultAsync(c => c.Id == categoryId);
+        if (category is null)
+        {
+            throw new ValidationAppException($"Category '{categoryId}' does not exist.");
+        }
+
+        var rawName = category.Name.Trim();
+        var cleanChars = rawName.Where(char.IsLetterOrDigit).ToArray();
+        var cleanName = new string(cleanChars);
+        var code = (cleanName.Length >= 2 ? cleanName[..2] : cleanName.PadRight(2, 'X')).ToUpperInvariant();
+
+        var prefix = $"SKU-{code}-";
+        var existingSkus = await _db.Products
+            .Where(p => p.Sku.StartsWith(prefix))
+            .Select(p => p.Sku)
+            .ToListAsync();
+
+        var maxNumber = 0;
+        foreach (var sku in existingSkus)
+        {
+            var numPart = sku[prefix.Length..];
+            if (int.TryParse(numPart, out var n) && n > maxNumber)
+            {
+                maxNumber = n;
+            }
+        }
+
+        var nextNumber = maxNumber + 1;
+        var candidate = $"SKU-{code}-{nextNumber:D4}";
+
+        while (await _db.Products.AnyAsync(p => p.Sku == candidate))
+        {
+            nextNumber++;
+            candidate = $"SKU-{code}-{nextNumber:D4}";
+        }
+
+        return candidate;
+    }
 }
+

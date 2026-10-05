@@ -97,4 +97,5 @@ public interface IProductService
     Task DeleteAsync(Guid id);
     Task<ProductDto> AdjustStockAsync(Guid id, AdjustStockRequest request, Guid? userId);
     Task<List<ProductDto>> GetLowStockAsync();
+    Task<string> GenerateNextSkuAsync(Guid categoryId);
 }
