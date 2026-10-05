@@ -70,4 +70,14 @@ public class ProductsController : ApiControllerBase
     {
         return Ok(await _productService.AdjustStockAsync(id, request, CurrentUserId));
     }
+
+    [HttpGet("next-sku")]
+    public async Task<ActionResult<NextSkuResponse>> GetNextSku([FromQuery] Guid categoryId)
+    {
+        var sku = await _productService.GenerateNextSkuAsync(categoryId);
+        return Ok(new NextSkuResponse(sku));
+    }
 }
+
+public record NextSkuResponse(string Sku);
+
