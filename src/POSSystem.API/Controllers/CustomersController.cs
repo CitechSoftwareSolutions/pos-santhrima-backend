@@ -41,6 +41,18 @@ public class CustomersController : ApiControllerBase
         return Ok(await _customerService.UpdateAsync(id, request));
     }
 
+    [HttpPost("{id:guid}/claim-gift")]
+    public async Task<ActionResult<CustomerDto>> ClaimGift(Guid id)
+    {
+        return Ok(await _customerService.ClaimMilestoneGiftAsync(id));
+    }
+
+    [HttpGet("{id:guid}/loyalty-history")]
+    public async Task<ActionResult<List<LoyaltyTransactionDto>>> GetLoyaltyHistory(Guid id)
+    {
+        return Ok(await _customerService.GetLoyaltyHistoryAsync(id));
+    }
+
     [HttpDelete("{id:guid}")]
     [Authorize(Roles = $"{Roles.Admin},{Roles.Manager}")]
     public async Task<IActionResult> Delete(Guid id)

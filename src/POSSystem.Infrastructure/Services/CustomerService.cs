@@ -18,6 +18,8 @@ public class CustomerService : ICustomerService
 
     public async Task<PagedResult<CustomerDto>> GetAllAsync(PaginationParams query)
     {
+        await ProcessExpiredLoyaltyPointsAsync();
+
         var customers = _db.Customers.AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(query.Search))
@@ -31,12 +33,31 @@ public class CustomerService : ICustomerService
 
         var totalCount = await customers.CountAsync();
 
-        var items = await customers
+        var pageList = await customers
             .OrderBy(c => c.Name)
             .Skip((query.Page - 1) * query.PageSize)
             .Take(query.PageSize)
-            .Select(c => ToDto(c))
             .ToListAsync();
+
+        var customerIds = pageList.Select(c => c.Id).ToList();
+
+        var earnedMap = await _db.LoyaltyTransactions
+            .Where(t => customerIds.Contains(t.CustomerId) && t.Type == LoyaltyTransactionType.Earned)
+            .GroupBy(t => t.CustomerId)
+            .Select(g => new { CustomerId = g.Key, Total = g.Sum(x => x.Points) })
+            .ToDictionaryAsync(x => x.CustomerId, x => x.Total);
+
+        var expiredMap = await _db.LoyaltyTransactions
+            .Where(t => customerIds.Contains(t.CustomerId) && t.Type == LoyaltyTransactionType.Expired)
+            .GroupBy(t => t.CustomerId)
+            .Select(g => new { CustomerId = g.Key, Total = g.Sum(x => Math.Abs(x.Points)) })
+            .ToDictionaryAsync(x => x.CustomerId, x => x.Total);
+
+        var items = pageList.Select(c => ToDto(
+            c,
+            earnedMap.GetValueOrDefault(c.Id, 0m),
+            expiredMap.GetValueOrDefault(c.Id, 0m)
+        )).ToList();
 
         return new PagedResult<CustomerDto>
         {
@@ -49,10 +70,20 @@ public class CustomerService : ICustomerService
 
     public async Task<CustomerDto> GetByIdAsync(Guid id)
     {
+        await ProcessExpiredLoyaltyPointsAsync(id);
+
         var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Id == id)
             ?? throw new NotFoundException(nameof(Customer), id);
 
-        return ToDto(customer);
+        var earned = await _db.LoyaltyTransactions
+            .Where(t => t.CustomerId == id && t.Type == LoyaltyTransactionType.Earned)
+            .SumAsync(t => (decimal?)t.Points) ?? 0m;
+
+        var expired = await _db.LoyaltyTransactions
+            .Where(t => t.CustomerId == id && t.Type == LoyaltyTransactionType.Expired)
+            .SumAsync(t => (decimal?)Math.Abs(t.Points)) ?? 0m;
+
+        return ToDto(customer, earned, expired);
     }
 
     public async Task<CustomerDto> CreateAsync(CreateCustomerRequest request)
@@ -68,7 +99,7 @@ public class CustomerService : ICustomerService
         _db.Customers.Add(customer);
         await _db.SaveChangesAsync();
 
-        return ToDto(customer);
+        return ToDto(customer, 0m, 0m);
     }
 
     public async Task<CustomerDto> UpdateAsync(Guid id, UpdateCustomerRequest request)
@@ -85,7 +116,7 @@ public class CustomerService : ICustomerService
 
         await _db.SaveChangesAsync();
 
-        return ToDto(customer);
+        return await GetByIdAsync(id);
     }
 
     public async Task DeleteAsync(Guid id)
@@ -98,6 +129,133 @@ public class CustomerService : ICustomerService
         await _db.SaveChangesAsync();
     }
 
-    private static CustomerDto ToDto(Customer c) =>
-        new(c.Id, c.Name, c.Phone, c.Email, c.Address, c.LoyaltyPoints, c.CreditBalance, c.IsActive);
+    public async Task<CustomerDto> ClaimMilestoneGiftAsync(Guid customerId)
+    {
+        var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Id == customerId)
+            ?? throw new NotFoundException(nameof(Customer), customerId);
+
+        var tier = (int)Math.Floor(customer.TotalPurchases / 100000m);
+        if (tier <= customer.MilestoneGiftsClaimed)
+        {
+            throw new BusinessRuleException(
+                $"Customer has not reached an unclaimed gift milestone. Tier: {tier}, gifts claimed: {customer.MilestoneGiftsClaimed}.");
+        }
+
+        customer.MilestoneGiftsClaimed++;
+        customer.UpdatedAt = DateTime.UtcNow;
+
+        _db.LoyaltyTransactions.Add(new LoyaltyTransaction
+        {
+            CustomerId = customer.Id,
+            Type = LoyaltyTransactionType.MilestoneGiftClaimed,
+            Points = 0,
+            PointsRemaining = 0,
+            Notes = $"Milestone gift #{customer.MilestoneGiftsClaimed} claimed for reaching tier Rs. {customer.MilestoneGiftsClaimed * 100000:N0} purchases."
+        });
+
+        await _db.SaveChangesAsync();
+
+        return await GetByIdAsync(customerId);
+    }
+
+    public async Task<List<LoyaltyTransactionDto>> GetLoyaltyHistoryAsync(Guid customerId)
+    {
+        await ProcessExpiredLoyaltyPointsAsync(customerId);
+
+        return await _db.LoyaltyTransactions
+            .Include(t => t.Sale)
+            .Where(t => t.CustomerId == customerId)
+            .OrderByDescending(t => t.CreatedAt)
+            .Select(t => new LoyaltyTransactionDto(
+                t.Id,
+                t.Type,
+                t.Points,
+                t.PointsRemaining,
+                t.ExpiresAt,
+                t.ExpiresAt.HasValue && t.ExpiresAt.Value <= DateTime.UtcNow,
+                t.CreatedAt,
+                t.SaleId,
+                t.Sale != null ? t.Sale.SaleNumber : null,
+                t.Notes
+            ))
+            .ToListAsync();
+    }
+
+    public async Task ProcessExpiredLoyaltyPointsAsync(Guid? customerId = null)
+    {
+        var now = DateTime.UtcNow;
+        var query = _db.LoyaltyTransactions
+            .Where(t => t.Type == LoyaltyTransactionType.Earned && t.PointsRemaining > 0 && t.ExpiresAt <= now);
+
+        if (customerId.HasValue)
+        {
+            query = query.Where(t => t.CustomerId == customerId.Value);
+        }
+
+        var expiredBatches = await query.ToListAsync();
+        if (expiredBatches.Count == 0) return;
+
+        var customerIds = expiredBatches.Select(b => b.CustomerId).Distinct().ToList();
+
+        foreach (var batch in expiredBatches)
+        {
+            _db.LoyaltyTransactions.Add(new LoyaltyTransaction
+            {
+                CustomerId = batch.CustomerId,
+                SaleId = batch.SaleId,
+                Type = LoyaltyTransactionType.Expired,
+                Points = -batch.PointsRemaining,
+                PointsRemaining = 0,
+                Notes = $"Expired 3-month old points earned on {batch.CreatedAt:yyyy-MM-dd}"
+            });
+            batch.PointsRemaining = 0;
+            batch.UpdatedAt = now;
+        }
+
+        var affectedCustomers = await _db.Customers
+            .Where(c => customerIds.Contains(c.Id))
+            .ToListAsync();
+
+        foreach (var cust in affectedCustomers)
+        {
+            var activeRemaining = await _db.LoyaltyTransactions
+                .Where(t => t.CustomerId == cust.Id && t.Type == LoyaltyTransactionType.Earned && t.PointsRemaining > 0 && t.ExpiresAt > now)
+                .SumAsync(t => (decimal?)t.PointsRemaining) ?? 0m;
+
+            cust.LoyaltyPoints = activeRemaining;
+            cust.UpdatedAt = now;
+        }
+
+        await _db.SaveChangesAsync();
+    }
+
+    private static CustomerDto ToDto(Customer c, decimal lifetimeEarned, decimal lifetimeExpired)
+    {
+        var tier = (int)Math.Floor(c.TotalPurchases / 100000m);
+        var nextMilestone = (tier + 1) * 100000m;
+        var toNext = Math.Max(0, nextMilestone - c.TotalPurchases);
+        var canRedeem = c.TotalPurchases >= 100000m;
+        var isEligibleGift = tier > c.MilestoneGiftsClaimed;
+
+        return new CustomerDto(
+            c.Id,
+            c.Name,
+            c.Phone,
+            c.Email,
+            c.Address,
+            c.LoyaltyPoints,
+            c.TotalPurchases,
+            c.LoyaltyPointsRedeemed,
+            lifetimeEarned,
+            lifetimeExpired,
+            tier,
+            c.MilestoneGiftsClaimed,
+            isEligibleGift,
+            canRedeem,
+            nextMilestone,
+            toNext,
+            c.CreditBalance,
+            c.IsActive
+        );
+    }
 }
