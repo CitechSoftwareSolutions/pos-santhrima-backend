@@ -20,6 +20,8 @@ public class SaleConfiguration : IEntityTypeConfiguration<Sale>
         builder.Property(s => s.TotalAmount).HasColumnType("numeric(18,2)");
         builder.Property(s => s.AmountPaid).HasColumnType("numeric(18,2)");
         builder.Property(s => s.ChangeDue).HasColumnType("numeric(18,2)");
+        builder.Property(s => s.LoyaltyPointsRedeemed).HasColumnType("numeric(18,2)");
+        builder.Property(s => s.LoyaltyPointsEarned).HasColumnType("numeric(18,2)");
 
         builder.HasOne(s => s.Customer)
             .WithMany(c => c.Sales)

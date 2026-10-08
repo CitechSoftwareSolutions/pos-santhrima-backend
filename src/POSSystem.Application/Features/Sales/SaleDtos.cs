@@ -17,6 +17,7 @@ public record CreateSaleRequest(
     List<CreateSaleItemRequest> Items,
     List<CreateSalePaymentRequest> Payments,
     decimal DiscountAmount = 0,
+    decimal LoyaltyPointsRedeemed = 0,
     string? Notes = null);
 
 public record SaleItemDto(
@@ -48,6 +49,8 @@ public record SaleDto(
     decimal TotalAmount,
     decimal AmountPaid,
     decimal ChangeDue,
+    decimal LoyaltyPointsRedeemed,
+    decimal LoyaltyPointsEarned,
     SaleStatus Status,
     PaymentStatus PaymentStatus,
     string? Notes,

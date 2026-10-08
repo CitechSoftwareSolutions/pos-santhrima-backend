@@ -214,7 +214,65 @@ public class SaleService : ISaleService
             itemDiscount += combinedDiscount;
         }
 
-        var totalDiscount = itemDiscount + request.DiscountAmount;
+        decimal pointsRedeemed = 0;
+        decimal pointsDiscount = 0;
+
+        if (customer is not null && request.LoyaltyPointsRedeemed > 0)
+        {
+            if (customer.TotalPurchases < 100000m)
+            {
+                throw new BusinessRuleException(
+                    $"Royalty points can only be redeemed once cumulative purchases reach Rs. 100,000. Current total purchases: Rs. {customer.TotalPurchases:N2}.");
+            }
+
+            // Expire overdue batches (points older than 3 months)
+            var overdueBatches = await _db.LoyaltyTransactions
+                .Where(t => t.CustomerId == customer.Id && t.Type == LoyaltyTransactionType.Earned && t.PointsRemaining > 0 && t.ExpiresAt <= DateTime.UtcNow)
+                .ToListAsync();
+
+            foreach (var ob in overdueBatches)
+            {
+                _db.LoyaltyTransactions.Add(new LoyaltyTransaction
+                {
+                    CustomerId = customer.Id,
+                    Type = LoyaltyTransactionType.Expired,
+                    Points = -ob.PointsRemaining,
+                    PointsRemaining = 0,
+                    Notes = $"Expired 3-month old points earned on {ob.CreatedAt:yyyy-MM-dd}"
+                });
+                ob.PointsRemaining = 0;
+                ob.UpdatedAt = DateTime.UtcNow;
+            }
+
+            var activeBatches = await _db.LoyaltyTransactions
+                .Where(t => t.CustomerId == customer.Id && t.Type == LoyaltyTransactionType.Earned && t.PointsRemaining > 0 && t.ExpiresAt > DateTime.UtcNow)
+                .OrderBy(t => t.CreatedAt)
+                .ToListAsync();
+
+            var availablePoints = activeBatches.Sum(b => b.PointsRemaining);
+            if (request.LoyaltyPointsRedeemed > availablePoints)
+            {
+                throw new ValidationAppException($"Insufficient active loyalty points. Available: {availablePoints:N2}, requested: {request.LoyaltyPointsRedeemed:N2}.");
+            }
+
+            pointsRedeemed = request.LoyaltyPointsRedeemed;
+            pointsDiscount = pointsRedeemed; // 1 point = Rs. 1
+
+            // Consume points FIFO
+            var remainingToDeduct = pointsRedeemed;
+            foreach (var batch in activeBatches)
+            {
+                var take = Math.Min(batch.PointsRemaining, remainingToDeduct);
+                batch.PointsRemaining -= take;
+                batch.UpdatedAt = DateTime.UtcNow;
+                remainingToDeduct -= take;
+                if (remainingToDeduct <= 0) break;
+            }
+
+            customer.LoyaltyPointsRedeemed += pointsRedeemed;
+        }
+
+        var totalDiscount = itemDiscount + request.DiscountAmount + pointsDiscount;
         var totalAmount = subTotal - totalDiscount + itemTax;
         if (totalAmount < 0)
         {
@@ -229,10 +287,19 @@ public class SaleService : ISaleService
         sale.TotalAmount = totalAmount;
         sale.AmountPaid = amountPaid;
         sale.ChangeDue = Math.Max(0, amountPaid - totalAmount);
+        sale.LoyaltyPointsRedeemed = pointsRedeemed;
         sale.PaymentStatus = amountPaid <= 0
             ? PaymentStatus.Unpaid
             : (amountPaid >= totalAmount ? PaymentStatus.Paid : PaymentStatus.PartiallyPaid);
         sale.Status = SaleStatus.Completed;
+
+        // Earn loyalty points: 0.01% of total bill
+        decimal pointsEarned = 0;
+        if (customer is not null)
+        {
+            pointsEarned = Math.Round(totalAmount * 0.0001m, 2);
+            sale.LoyaltyPointsEarned = pointsEarned;
+        }
 
         foreach (var payment in request.Payments ?? new List<CreateSalePaymentRequest>())
         {
@@ -244,13 +311,43 @@ public class SaleService : ISaleService
             });
         }
 
+        _db.Sales.Add(sale);
+
         if (customer is not null)
         {
-            customer.LoyaltyPoints += (int)Math.Floor(totalAmount / 100);
+            customer.TotalPurchases += totalAmount;
+
+            if (pointsRedeemed > 0)
+            {
+                _db.LoyaltyTransactions.Add(new LoyaltyTransaction
+                {
+                    CustomerId = customer.Id,
+                    Sale = sale,
+                    Type = LoyaltyTransactionType.Redeemed,
+                    Points = -pointsRedeemed,
+                    PointsRemaining = 0,
+                    Notes = $"Redeemed {pointsRedeemed:N2} points for Rs. {pointsRedeemed:N2} discount on {sale.SaleNumber}"
+                });
+            }
+
+            if (pointsEarned > 0)
+            {
+                _db.LoyaltyTransactions.Add(new LoyaltyTransaction
+                {
+                    CustomerId = customer.Id,
+                    Sale = sale,
+                    Type = LoyaltyTransactionType.Earned,
+                    Points = pointsEarned,
+                    PointsRemaining = pointsEarned,
+                    ExpiresAt = DateTime.UtcNow.AddMonths(3),
+                    Notes = $"Earned {pointsEarned:N2} points (0.01% of Rs. {totalAmount:N2}) on {sale.SaleNumber}"
+                });
+            }
+
+            customer.LoyaltyPoints = Math.Max(0, customer.LoyaltyPoints - pointsRedeemed + pointsEarned);
             customer.UpdatedAt = DateTime.UtcNow;
         }
 
-        _db.Sales.Add(sale);
         await _db.SaveChangesAsync();
         await transaction.CommitAsync();
 
@@ -294,6 +391,47 @@ public class SaleService : ISaleService
         sale.Status = SaleStatus.Cancelled;
         sale.Notes = string.IsNullOrWhiteSpace(sale.Notes) ? $"Voided: {reason}" : $"{sale.Notes} | Voided: {reason}";
         sale.UpdatedAt = DateTime.UtcNow;
+
+        if (sale.CustomerId.HasValue)
+        {
+            var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Id == sale.CustomerId.Value);
+            if (customer is not null)
+            {
+                customer.TotalPurchases = Math.Max(0, customer.TotalPurchases - sale.TotalAmount);
+
+                if (sale.LoyaltyPointsEarned > 0)
+                {
+                    _db.LoyaltyTransactions.Add(new LoyaltyTransaction
+                    {
+                        CustomerId = customer.Id,
+                        SaleId = sale.Id,
+                        Type = LoyaltyTransactionType.Adjustment,
+                        Points = -sale.LoyaltyPointsEarned,
+                        PointsRemaining = 0,
+                        Notes = $"Reversal of points earned on voided sale {sale.SaleNumber}"
+                    });
+                    customer.LoyaltyPoints = Math.Max(0, customer.LoyaltyPoints - sale.LoyaltyPointsEarned);
+                }
+
+                if (sale.LoyaltyPointsRedeemed > 0)
+                {
+                    _db.LoyaltyTransactions.Add(new LoyaltyTransaction
+                    {
+                        CustomerId = customer.Id,
+                        SaleId = sale.Id,
+                        Type = LoyaltyTransactionType.Earned,
+                        Points = sale.LoyaltyPointsRedeemed,
+                        PointsRemaining = sale.LoyaltyPointsRedeemed,
+                        ExpiresAt = DateTime.UtcNow.AddMonths(3),
+                        Notes = $"Restoration of points redeemed on voided sale {sale.SaleNumber}"
+                    });
+                    customer.LoyaltyPointsRedeemed = Math.Max(0, customer.LoyaltyPointsRedeemed - sale.LoyaltyPointsRedeemed);
+                    customer.LoyaltyPoints += sale.LoyaltyPointsRedeemed;
+                }
+
+                customer.UpdatedAt = DateTime.UtcNow;
+            }
+        }
 
         await _db.SaveChangesAsync();
         await transaction.CommitAsync();
@@ -393,6 +531,8 @@ public class SaleService : ISaleService
             sale.TotalAmount,
             sale.AmountPaid,
             sale.ChangeDue,
+            sale.LoyaltyPointsRedeemed,
+            sale.LoyaltyPointsEarned,
             sale.Status,
             sale.PaymentStatus,
             sale.Notes,

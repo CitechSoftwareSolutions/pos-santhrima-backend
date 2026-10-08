@@ -20,6 +20,8 @@ public class Sale : BaseEntity
     public decimal TotalAmount { get; set; }
     public decimal AmountPaid { get; set; }
     public decimal ChangeDue { get; set; }
+    public decimal LoyaltyPointsRedeemed { get; set; } = 0;
+    public decimal LoyaltyPointsEarned { get; set; } = 0;
 
     public SaleStatus Status { get; set; } = SaleStatus.Completed;
     public PaymentStatus PaymentStatus { get; set; } = PaymentStatus.Paid;

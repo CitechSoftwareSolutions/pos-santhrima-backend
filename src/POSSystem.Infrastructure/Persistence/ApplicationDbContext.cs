@@ -24,6 +24,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
     public DbSet<Promotion> Promotions => Set<Promotion>();
     public DbSet<ProductPriceTier> ProductPriceTiers => Set<ProductPriceTier>();
+    public DbSet<LoyaltyTransaction> LoyaltyTransactions => Set<LoyaltyTransaction>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -46,5 +47,6 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
         builder.Entity<Customer>().HasQueryFilter(e => !e.IsDeleted);
         builder.Entity<Supplier>().HasQueryFilter(e => !e.IsDeleted);
         builder.Entity<Promotion>().HasQueryFilter(e => !e.IsDeleted);
+        builder.Entity<LoyaltyTransaction>().HasQueryFilter(e => !e.IsDeleted);
     }
 }
