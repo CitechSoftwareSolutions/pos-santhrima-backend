@@ -219,10 +219,13 @@ public class SaleService : ISaleService
 
         if (customer is not null && request.LoyaltyPointsRedeemed > 0)
         {
-            if (customer.TotalPurchases < 100000m)
+            const decimal milestoneThreshold = 75000m;
+            var tier = (int)Math.Floor(customer.TotalPurchases / milestoneThreshold);
+            if (tier <= customer.MilestoneGiftsClaimed)
             {
+                var nextMilestone = (customer.MilestoneGiftsClaimed + 1) * milestoneThreshold;
                 throw new BusinessRuleException(
-                    $"Royalty points can only be redeemed once cumulative purchases reach Rs. 100,000. Current total purchases: Rs. {customer.TotalPurchases:N2}.");
+                    $"Royalty points can only be redeemed after reaching each Rs. {milestoneThreshold:N0} milestone. Next redeemable milestone: Rs. {nextMilestone:N0}. Current purchases: Rs. {customer.TotalPurchases:N2}.");
             }
 
             // Expire overdue batches (points older than 3 months)
@@ -270,6 +273,7 @@ public class SaleService : ISaleService
             }
 
             customer.LoyaltyPointsRedeemed += pointsRedeemed;
+            customer.MilestoneGiftsClaimed++;
         }
 
         var totalDiscount = itemDiscount + request.DiscountAmount + pointsDiscount;
@@ -293,11 +297,11 @@ public class SaleService : ISaleService
             : (amountPaid >= totalAmount ? PaymentStatus.Paid : PaymentStatus.PartiallyPaid);
         sale.Status = SaleStatus.Completed;
 
-        // Earn loyalty points: 0.01% of total bill
+        // Earn loyalty points: 0.001 rate of total bill
         decimal pointsEarned = 0;
         if (customer is not null)
         {
-            pointsEarned = Math.Round(totalAmount * 0.0001m, 2);
+            pointsEarned = Math.Round(totalAmount * 0.001m, 2);
             sale.LoyaltyPointsEarned = pointsEarned;
         }
 
@@ -340,7 +344,7 @@ public class SaleService : ISaleService
                     Points = pointsEarned,
                     PointsRemaining = pointsEarned,
                     ExpiresAt = DateTime.UtcNow.AddMonths(3),
-                    Notes = $"Earned {pointsEarned:N2} points (0.01% of Rs. {totalAmount:N2}) on {sale.SaleNumber}"
+                    Notes = $"Earned {pointsEarned:N2} points (0.001 rate on Rs. {totalAmount:N2}) on {sale.SaleNumber}"
                 });
             }
 
