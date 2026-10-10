@@ -46,6 +46,22 @@ public class AuthController : ApiControllerBase
         return NoContent();
     }
 
+    [HttpPut("users/{id:guid}")]
+    [Authorize(Roles = Roles.Admin)]
+    public async Task<ActionResult<UserDto>> UpdateUser(Guid id, UpdateUserRequest request)
+    {
+        var result = await _authService.UpdateUserAsync(id, request);
+        return Ok(result);
+    }
+
+    [HttpDelete("users/{id:guid}")]
+    [Authorize(Roles = Roles.Admin)]
+    public async Task<IActionResult> DeleteUser(Guid id)
+    {
+        await _authService.DeleteUserAsync(id, CurrentUserId);
+        return NoContent();
+    }
+
     [HttpPost("change-password")]
     [Authorize]
     public async Task<IActionResult> ChangePassword(ChangePasswordRequest request)

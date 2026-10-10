@@ -2,6 +2,8 @@ namespace POSSystem.Application.Features.Auth;
 
 public record RegisterRequest(string FullName, string Email, string Password, string Role);
 
+public record UpdateUserRequest(string FullName, string Email, string? Password, string Role);
+
 public record LoginRequest(string Email, string Password);
 
 public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
@@ -17,6 +19,8 @@ public interface IAuthService
     Task<List<UserDto>> GetAllUsersAsync();
     Task SetUserActiveStatusAsync(Guid userId, bool isActive);
     Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request);
+    Task<UserDto> UpdateUserAsync(Guid userId, UpdateUserRequest request);
+    Task DeleteUserAsync(Guid userId, Guid currentUserId);
 }
 
 public interface ITokenService
