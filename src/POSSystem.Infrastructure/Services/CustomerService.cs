@@ -134,7 +134,8 @@ public class CustomerService : ICustomerService
         var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Id == customerId)
             ?? throw new NotFoundException(nameof(Customer), customerId);
 
-        var tier = (int)Math.Floor(customer.TotalPurchases / 100000m);
+        const decimal milestoneThreshold = 75000m;
+        var tier = (int)Math.Floor(customer.TotalPurchases / milestoneThreshold);
         if (tier <= customer.MilestoneGiftsClaimed)
         {
             throw new BusinessRuleException(
@@ -142,15 +143,28 @@ public class CustomerService : ICustomerService
         }
 
         customer.MilestoneGiftsClaimed++;
+        var pointsReset = customer.LoyaltyPoints;
+        customer.LoyaltyPoints = 0m;
         customer.UpdatedAt = DateTime.UtcNow;
+
+        // Reset all remaining active earned batches so points cannot be redeemed
+        var activeBatches = await _db.LoyaltyTransactions
+            .Where(t => t.CustomerId == customer.Id && t.Type == LoyaltyTransactionType.Earned && t.PointsRemaining > 0)
+            .ToListAsync();
+
+        foreach (var batch in activeBatches)
+        {
+            batch.PointsRemaining = 0;
+            batch.UpdatedAt = DateTime.UtcNow;
+        }
 
         _db.LoyaltyTransactions.Add(new LoyaltyTransaction
         {
             CustomerId = customer.Id,
             Type = LoyaltyTransactionType.MilestoneGiftClaimed,
-            Points = 0,
+            Points = -pointsReset,
             PointsRemaining = 0,
-            Notes = $"Milestone gift #{customer.MilestoneGiftsClaimed} claimed for reaching tier Rs. {customer.MilestoneGiftsClaimed * 100000:N0} purchases."
+            Notes = $"Milestone gift #{customer.MilestoneGiftsClaimed} claimed for reaching tier Rs. {customer.MilestoneGiftsClaimed * milestoneThreshold:N0} purchases. Royalty points ({pointsReset:N2} pts) reset to zero."
         });
 
         await _db.SaveChangesAsync();
@@ -231,11 +245,13 @@ public class CustomerService : ICustomerService
 
     private static CustomerDto ToDto(Customer c, decimal lifetimeEarned, decimal lifetimeExpired)
     {
-        var tier = (int)Math.Floor(c.TotalPurchases / 100000m);
-        var nextMilestone = (tier + 1) * 100000m;
+        const decimal milestoneThreshold = 75000m;
+        var tier = (int)Math.Floor(c.TotalPurchases / milestoneThreshold);
+        var isEligible = tier > c.MilestoneGiftsClaimed;
+        var nextMilestone = (Math.Max(tier, c.MilestoneGiftsClaimed) + 1) * milestoneThreshold;
         var toNext = Math.Max(0, nextMilestone - c.TotalPurchases);
-        var canRedeem = c.TotalPurchases >= 100000m;
-        var isEligibleGift = tier > c.MilestoneGiftsClaimed;
+        var canRedeem = isEligible;
+        var isEligibleGift = isEligible;
 
         return new CustomerDto(
             c.Id,
