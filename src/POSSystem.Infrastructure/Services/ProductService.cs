@@ -296,7 +296,7 @@ public class ProductService : IProductService
             {
                 Quantity = t.Quantity,
                 RetailPrice = t.RetailPrice,
-                WholesalePrice = t.WholesalePrice,
+                WholesalePrice = t.Quantity == 1 ? null : t.WholesalePrice,
                 SpecialPrice = t.SpecialPrice,
             })
             .ToList();
