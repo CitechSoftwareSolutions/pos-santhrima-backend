@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Identity;
 using POSSystem.Application.Common.Exceptions;
 using POSSystem.Application.Features.Auth;
+using POSSystem.Domain.Enums;
 
 namespace POSSystem.Infrastructure.Identity;
 
@@ -101,6 +102,80 @@ public class AuthService : IAuthService
             ?? throw new NotFoundException(nameof(ApplicationUser), userId);
 
         var result = await _userManager.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
+        if (!result.Succeeded)
+        {
+            throw new ValidationAppException(BuildErrors(result));
+        }
+    }
+
+    public async Task<UserDto> UpdateUserAsync(Guid userId, UpdateUserRequest request)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString())
+            ?? throw new NotFoundException(nameof(ApplicationUser), userId);
+
+        if (!await _roleManager.RoleExistsAsync(request.Role))
+        {
+            throw new ValidationAppException($"Role '{request.Role}' does not exist.");
+        }
+
+        var existing = await _userManager.FindByEmailAsync(request.Email);
+        if (existing is not null && existing.Id != user.Id)
+        {
+            throw new ConflictException($"A user with email '{request.Email}' already exists.");
+        }
+
+        user.FullName = request.FullName.Trim();
+        user.Email = request.Email.Trim();
+        user.UserName = request.Email.Trim();
+
+        var updateResult = await _userManager.UpdateAsync(user);
+        if (!updateResult.Succeeded)
+        {
+            throw new ValidationAppException(BuildErrors(updateResult));
+        }
+
+        var currentRoles = await _userManager.GetRolesAsync(user);
+        if (!currentRoles.Contains(request.Role))
+        {
+            await _userManager.RemoveFromRolesAsync(user, currentRoles);
+            await _userManager.AddToRoleAsync(user, request.Role);
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Password))
+        {
+            var resetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
+            var passResult = await _userManager.ResetPasswordAsync(user, resetToken, request.Password);
+            if (!passResult.Succeeded)
+            {
+                throw new ValidationAppException(BuildErrors(passResult));
+            }
+        }
+
+        var updatedRoles = await _userManager.GetRolesAsync(user);
+        return new UserDto(user.Id, user.FullName, user.Email!, updatedRoles, user.IsActive);
+    }
+
+    public async Task DeleteUserAsync(Guid userId, Guid currentUserId)
+    {
+        if (userId == currentUserId)
+        {
+            throw new BusinessRuleException("You cannot delete your own account.");
+        }
+
+        var user = await _userManager.FindByIdAsync(userId.ToString())
+            ?? throw new NotFoundException(nameof(ApplicationUser), userId);
+
+        var roles = await _userManager.GetRolesAsync(user);
+        if (roles.Contains(Roles.Admin))
+        {
+            var adminUsers = await _userManager.GetUsersInRoleAsync(Roles.Admin);
+            if (adminUsers.Count(u => u.IsActive && u.Id != userId) == 0)
+            {
+                throw new BusinessRuleException("Cannot delete the only remaining active Administrator.");
+            }
+        }
+
+        var result = await _userManager.DeleteAsync(user);
         if (!result.Succeeded)
         {
             throw new ValidationAppException(BuildErrors(result));
