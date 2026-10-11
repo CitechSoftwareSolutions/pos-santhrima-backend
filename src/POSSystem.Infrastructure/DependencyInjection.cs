@@ -11,7 +11,9 @@ using POSSystem.Application.Features.Promotions;
 using POSSystem.Application.Features.Purchases;
 using POSSystem.Application.Features.Reports;
 using POSSystem.Application.Features.Sales;
+using POSSystem.Application.Features.Settings;
 using POSSystem.Application.Features.Suppliers;
+using POSSystem.Application.Features.Terminals;
 using POSSystem.Infrastructure.Identity;
 using POSSystem.Infrastructure.Persistence;
 using POSSystem.Infrastructure.Services;
@@ -54,6 +56,8 @@ public static class DependencyInjection
         services.AddScoped<IPurchaseService, PurchaseService>();
         services.AddScoped<IReportService, ReportService>();
         services.AddScoped<IPromotionService, PromotionService>();
+        services.AddScoped<ISettingsService, SettingsService>();
+        services.AddScoped<ITerminalService, TerminalService>();
 
         return services;
     }

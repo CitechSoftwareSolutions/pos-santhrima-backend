@@ -18,7 +18,8 @@ public record CreateSaleRequest(
     List<CreateSalePaymentRequest> Payments,
     decimal DiscountAmount = 0,
     decimal LoyaltyPointsRedeemed = 0,
-    string? Notes = null);
+    string? Notes = null,
+    Guid? TerminalId = null);
 
 public record SaleItemDto(
     Guid Id,
@@ -42,6 +43,8 @@ public record SaleDto(
     string? CustomerName,
     Guid CashierId,
     string CashierName,
+    Guid? TerminalId,
+    string? TerminalName,
     DateTime SaleDate,
     decimal SubTotal,
     decimal TaxAmount,
@@ -62,6 +65,8 @@ public record SaleListItemDto(
     string SaleNumber,
     string? CustomerName,
     string CashierName,
+    Guid? TerminalId,
+    string? TerminalName,
     DateTime SaleDate,
     decimal TotalAmount,
     SaleStatus Status,
@@ -75,6 +80,7 @@ public record SaleQueryParams
     public DateTime? DateTo { get; set; }
     public Guid? CustomerId { get; set; }
     public Guid? CashierId { get; set; }
+    public Guid? TerminalId { get; set; }
     public SaleStatus? Status { get; set; }
     public string? Search { get; set; }
 }
