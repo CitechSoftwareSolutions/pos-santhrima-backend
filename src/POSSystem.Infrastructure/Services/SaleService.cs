@@ -23,6 +23,7 @@ public class SaleService : ISaleService
     {
         var sales = _db.Sales
             .Include(s => s.Customer)
+            .Include(s => s.Terminal)
             .AsQueryable();
 
         if (query.DateFrom.HasValue)
@@ -45,6 +46,11 @@ public class SaleService : ISaleService
         if (query.CashierId.HasValue)
         {
             sales = sales.Where(s => s.CashierId == query.CashierId.Value);
+        }
+
+        if (query.TerminalId.HasValue)
+        {
+            sales = sales.Where(s => s.TerminalId == query.TerminalId.Value);
         }
 
         if (query.Status.HasValue)
@@ -82,6 +88,8 @@ public class SaleService : ISaleService
             s.SaleNumber,
             s.Customer?.Name,
             cashierNames.GetValueOrDefault(s.CashierId, "Unknown"),
+            s.TerminalId,
+            s.Terminal?.Name,
             s.SaleDate,
             s.TotalAmount,
             s.Status,
@@ -100,6 +108,7 @@ public class SaleService : ISaleService
     {
         var sale = await _db.Sales
             .Include(s => s.Customer)
+            .Include(s => s.Terminal)
             .Include(s => s.Items)
             .Include(s => s.Payments)
             .FirstOrDefaultAsync(s => s.Id == id)
@@ -141,6 +150,7 @@ public class SaleService : ISaleService
             SaleNumber = await GenerateSaleNumberAsync(),
             CustomerId = request.CustomerId,
             CashierId = cashierId,
+            TerminalId = request.TerminalId,
             SaleDate = DateTime.UtcNow,
             Notes = request.Notes,
         };
@@ -520,6 +530,11 @@ public class SaleService : ISaleService
     private async Task<SaleDto> ToDtoAsync(Sale sale)
     {
         var cashier = await _db.Users.FirstOrDefaultAsync(u => u.Id == sale.CashierId);
+        var terminalName = sale.Terminal?.Name;
+        if (terminalName is null && sale.TerminalId.HasValue)
+        {
+            terminalName = (await _db.TerminalSettings.FindAsync(sale.TerminalId.Value))?.Name;
+        }
 
         return new SaleDto(
             sale.Id,
@@ -528,6 +543,8 @@ public class SaleService : ISaleService
             sale.Customer?.Name,
             sale.CashierId,
             cashier?.FullName ?? "Unknown",
+            sale.TerminalId,
+            terminalName,
             sale.SaleDate,
             sale.SubTotal,
             sale.TaxAmount,

@@ -25,6 +25,8 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
     public DbSet<Promotion> Promotions => Set<Promotion>();
     public DbSet<ProductPriceTier> ProductPriceTiers => Set<ProductPriceTier>();
     public DbSet<LoyaltyTransaction> LoyaltyTransactions => Set<LoyaltyTransaction>();
+    public DbSet<StoreSetting> StoreSettings => Set<StoreSetting>();
+    public DbSet<TerminalSetting> TerminalSettings => Set<TerminalSetting>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -41,6 +43,15 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
         builder.Entity<IdentityRoleClaim<Guid>>().ToTable("RoleClaims");
         builder.Entity<IdentityUserToken<Guid>>().ToTable("UserTokens");
 
+        // Terminal uniqueness constraints and relationships
+        builder.Entity<TerminalSetting>().HasIndex(t => t.CounterNumber).IsUnique();
+        builder.Entity<TerminalSetting>().HasIndex(t => t.TerminalCode).IsUnique();
+        builder.Entity<Sale>()
+            .HasOne(s => s.Terminal)
+            .WithMany(t => t.Sales)
+            .HasForeignKey(s => s.TerminalId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         // Global query filter for soft delete
         builder.Entity<Category>().HasQueryFilter(e => !e.IsDeleted);
         builder.Entity<Product>().HasQueryFilter(e => !e.IsDeleted);
@@ -48,5 +59,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
         builder.Entity<Supplier>().HasQueryFilter(e => !e.IsDeleted);
         builder.Entity<Promotion>().HasQueryFilter(e => !e.IsDeleted);
         builder.Entity<LoyaltyTransaction>().HasQueryFilter(e => !e.IsDeleted);
+        builder.Entity<StoreSetting>().HasQueryFilter(e => !e.IsDeleted);
+        builder.Entity<TerminalSetting>().HasQueryFilter(e => !e.IsDeleted);
     }
 }

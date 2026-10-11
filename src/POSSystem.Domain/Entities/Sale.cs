@@ -11,6 +11,8 @@ public class Sale : BaseEntity
     public Customer? Customer { get; set; }
 
     public Guid CashierId { get; set; }
+    public Guid? TerminalId { get; set; }
+    public TerminalSetting? Terminal { get; set; }
 
     public DateTime SaleDate { get; set; } = DateTime.UtcNow;
 

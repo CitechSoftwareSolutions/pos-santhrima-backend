@@ -700,6 +700,9 @@ namespace POSSystem.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("TaxAmount")
                         .HasColumnType("numeric(18,2)");
 
+                    b.Property<Guid?>("TerminalId")
+                        .HasColumnType("uuid");
+
                     b.Property<decimal>("TotalAmount")
                         .HasColumnType("numeric(18,2)");
 
@@ -712,6 +715,8 @@ namespace POSSystem.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("SaleNumber")
                         .IsUnique();
+
+                    b.HasIndex("TerminalId");
 
                     b.ToTable("Sales", (string)null);
                 });
@@ -825,6 +830,67 @@ namespace POSSystem.Infrastructure.Persistence.Migrations
                     b.ToTable("StockMovements", (string)null);
                 });
 
+            modelBuilder.Entity("POSSystem.Domain.Entities.StoreSetting", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DefaultPaperWidth")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<decimal>("LoyaltyEarningRate")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("LoyaltyMilestoneGiftDescription")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("LoyaltyMilestoneThreshold")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal>("LoyaltyPointValue")
+                        .HasColumnType("numeric");
+
+                    b.Property<bool>("LoyaltyPointsEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("LoyaltyPointsExpiryMonths")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ReceiptFooter")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReceiptHeader")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("StoreAddress")
+                        .HasColumnType("text");
+
+                    b.Property<string>("StoreName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("StorePhone")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("StoreSettings");
+                });
+
             modelBuilder.Entity("POSSystem.Domain.Entities.Supplier", b =>
                 {
                     b.Property<Guid>("Id")
@@ -867,6 +933,82 @@ namespace POSSystem.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Suppliers", (string)null);
+                });
+
+            modelBuilder.Entity("POSSystem.Domain.Entities.TerminalSetting", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("AutoCutPaper")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("AutoPrintReceipt")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("BarcodeBeepOnScan")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("BarcodeDelimiter")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("BarcodeMinLength")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("BarcodeScannerType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("CashDrawerKick")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("CounterNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PaperWidth")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PrinterAddress")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PrinterType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TerminalCode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CounterNumber")
+                        .IsUnique();
+
+                    b.HasIndex("TerminalCode")
+                        .IsUnique();
+
+                    b.ToTable("TerminalSettings");
                 });
 
             modelBuilder.Entity("POSSystem.Infrastructure.Identity.ApplicationUser", b =>
@@ -1097,7 +1239,14 @@ namespace POSSystem.Infrastructure.Persistence.Migrations
                         .HasForeignKey("CustomerId")
                         .OnDelete(DeleteBehavior.Restrict);
 
+                    b.HasOne("POSSystem.Domain.Entities.TerminalSetting", "Terminal")
+                        .WithMany("Sales")
+                        .HasForeignKey("TerminalId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.Navigation("Customer");
+
+                    b.Navigation("Terminal");
                 });
 
             modelBuilder.Entity("POSSystem.Domain.Entities.SaleItem", b =>
@@ -1177,6 +1326,11 @@ namespace POSSystem.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("POSSystem.Domain.Entities.Supplier", b =>
                 {
                     b.Navigation("Purchases");
+                });
+
+            modelBuilder.Entity("POSSystem.Domain.Entities.TerminalSetting", b =>
+                {
+                    b.Navigation("Sales");
                 });
 #pragma warning restore 612, 618
         }
