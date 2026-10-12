@@ -50,4 +50,16 @@ public class ReportsController : ApiControllerBase
     {
         return Ok(await _reportService.GetPaymentMethodBreakdownAsync(dateFrom, dateTo));
     }
+
+    [HttpGet("cashier-sales")]
+    public async Task<ActionResult<List<CashierSalesDto>>> GetCashierSales([FromQuery] DateTime dateFrom, [FromQuery] DateTime dateTo)
+    {
+        return Ok(await _reportService.GetCashierSalesAsync(dateFrom, dateTo));
+    }
+
+    [HttpGet("counter-sales")]
+    public async Task<ActionResult<List<CounterSalesDto>>> GetCounterSales([FromQuery] DateTime dateFrom, [FromQuery] DateTime dateTo)
+    {
+        return Ok(await _reportService.GetCounterSalesAsync(dateFrom, dateTo));
+    }
 }
