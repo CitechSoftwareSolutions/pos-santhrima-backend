@@ -19,4 +19,5 @@ public class StoreSetting : BaseEntity
     public string ReceiptHeader { get; set; } = "Welcome to Santhrima Store\nYour trusted grocery partner";
     public string ReceiptFooter { get; set; } = "Thank you for shopping with us!\nExchange possible within 7 days with bill.";
     public string DefaultPaperWidth { get; set; } = "80mm"; // 80mm or 58mm
+    public string? HotkeyBindingsJson { get; set; }
 }

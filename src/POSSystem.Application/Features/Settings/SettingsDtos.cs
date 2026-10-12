@@ -13,7 +13,8 @@ public record StoreSettingsDto(
     string? StorePhone,
     string ReceiptHeader,
     string ReceiptFooter,
-    string DefaultPaperWidth);
+    string DefaultPaperWidth,
+    string? HotkeyBindingsJson);
 
 public record UpdateStoreSettingsRequest(
     bool LoyaltyPointsEnabled,
@@ -27,7 +28,8 @@ public record UpdateStoreSettingsRequest(
     string? StorePhone,
     string ReceiptHeader,
     string ReceiptFooter,
-    string DefaultPaperWidth);
+    string DefaultPaperWidth,
+    string? HotkeyBindingsJson);
 
 public interface ISettingsService
 {
