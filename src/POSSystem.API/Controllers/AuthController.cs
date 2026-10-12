@@ -31,7 +31,7 @@ public class AuthController : ApiControllerBase
     }
 
     [HttpGet("users")]
-    [Authorize(Roles = Roles.Admin)]
+    [Authorize]
     public async Task<ActionResult<List<UserDto>>> GetUsers()
     {
         var result = await _authService.GetAllUsersAsync();

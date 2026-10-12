@@ -89,7 +89,7 @@ public class SaleService : ISaleService
             s.Customer?.Name,
             cashierNames.GetValueOrDefault(s.CashierId, "Unknown"),
             s.TerminalId,
-            s.Terminal?.Name,
+            s.Terminal?.Name ?? (s.Terminal != null ? $"Counter {s.Terminal.CounterNumber}" : (s.TerminalId.HasValue ? "Counter" : null)),
             s.SaleDate,
             s.TotalAmount,
             s.Status,
