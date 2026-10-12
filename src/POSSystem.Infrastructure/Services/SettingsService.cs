@@ -49,6 +49,9 @@ public class SettingsService : ISettingsService
             try
             {
                 await _db.Database.ExecuteSqlRawAsync(createTableSql, cancellationToken);
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""HotkeyBindingsJson"" text NULL;",
+                    cancellationToken);
             }
             catch
             {
@@ -126,6 +129,7 @@ public class SettingsService : ISettingsService
         setting.ReceiptHeader = request.ReceiptHeader ?? string.Empty;
         setting.ReceiptFooter = request.ReceiptFooter ?? string.Empty;
         setting.DefaultPaperWidth = request.DefaultPaperWidth ?? "80mm";
+        setting.HotkeyBindingsJson = request.HotkeyBindingsJson;
         setting.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(cancellationToken);
@@ -146,5 +150,6 @@ public class SettingsService : ISettingsService
         s.StorePhone,
         s.ReceiptHeader,
         s.ReceiptFooter,
-        s.DefaultPaperWidth);
+        s.DefaultPaperWidth,
+        s.HotkeyBindingsJson);
 }
