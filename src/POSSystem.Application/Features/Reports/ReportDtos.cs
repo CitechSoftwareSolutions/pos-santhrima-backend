@@ -20,6 +20,18 @@ public record InventoryValuationDto(int TotalProducts, decimal TotalUnits, decim
 
 public record PaymentMethodBreakdownDto(string Method, decimal Amount, int Count);
 
+public record CashierSalesDto(
+    Guid CashierId,
+    string CashierName,
+    string? CashierEmail,
+    int TotalSales,
+    decimal TotalRevenue,
+    decimal AverageSaleValue,
+    decimal TotalDiscount,
+    decimal TotalTax,
+    DateTime? FirstSaleTime,
+    DateTime? LastSaleTime);
+
 public interface IReportService
 {
     Task<SalesSummaryDto> GetSalesSummaryAsync(DateTime dateFrom, DateTime dateTo);
@@ -28,4 +40,5 @@ public interface IReportService
     Task<List<LowStockReportItemDto>> GetLowStockReportAsync();
     Task<InventoryValuationDto> GetInventoryValuationAsync();
     Task<List<PaymentMethodBreakdownDto>> GetPaymentMethodBreakdownAsync(DateTime dateFrom, DateTime dateTo);
+    Task<List<CashierSalesDto>> GetCashierSalesAsync(DateTime dateFrom, DateTime dateTo);
 }

@@ -100,4 +100,48 @@ public class ReportService : IReportService
             .OrderByDescending(p => p.Amount)
             .ToList();
     }
+
+    public async Task<List<CashierSalesDto>> GetCashierSalesAsync(DateTime dateFrom, DateTime dateTo)
+    {
+        (dateFrom, dateTo) = (dateFrom.AsUtc(), dateTo.AsUtc());
+
+        var sales = await _db.Sales
+            .Where(s => s.SaleDate >= dateFrom && s.SaleDate <= dateTo && s.Status != SaleStatus.Cancelled)
+            .ToListAsync();
+
+        var cashierIds = sales.Select(s => s.CashierId).Distinct().ToList();
+
+        var users = await _db.Users
+            .Where(u => cashierIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id);
+
+        return sales
+            .GroupBy(s => s.CashierId)
+            .Select(g =>
+            {
+                var user = users.GetValueOrDefault(g.Key);
+                var totalSales = g.Count();
+                var totalRevenue = g.Sum(s => s.TotalAmount);
+                var avg = totalSales == 0 ? 0 : totalRevenue / totalSales;
+                var totalDiscount = g.Sum(s => s.DiscountAmount);
+                var totalTax = g.Sum(s => s.TaxAmount);
+                var firstSale = g.Min(s => (DateTime?)s.SaleDate);
+                var lastSale = g.Max(s => (DateTime?)s.SaleDate);
+
+                return new CashierSalesDto(
+                    g.Key,
+                    user?.FullName ?? "Unknown Cashier",
+                    user?.Email,
+                    totalSales,
+                    totalRevenue,
+                    avg,
+                    totalDiscount,
+                    totalTax,
+                    firstSale,
+                    lastSale
+                );
+            })
+            .OrderByDescending(c => c.TotalRevenue)
+            .ToList();
+    }
 }
