@@ -24,6 +24,8 @@ public record CashierSalesDto(
     Guid CashierId,
     string CashierName,
     string? CashierEmail,
+    string? CounterName,
+    int? CounterNumber,
     int TotalSales,
     decimal TotalRevenue,
     decimal AverageSaleValue,
@@ -31,6 +33,16 @@ public record CashierSalesDto(
     decimal TotalTax,
     DateTime? FirstSaleTime,
     DateTime? LastSaleTime);
+
+public record CounterSalesDto(
+    Guid? TerminalId,
+    int? CounterNumber,
+    string CounterName,
+    string? TerminalCode,
+    int TotalSales,
+    decimal TotalRevenue,
+    decimal AverageSaleValue,
+    List<string> ActiveCashiers);
 
 public interface IReportService
 {
@@ -41,4 +53,5 @@ public interface IReportService
     Task<InventoryValuationDto> GetInventoryValuationAsync();
     Task<List<PaymentMethodBreakdownDto>> GetPaymentMethodBreakdownAsync(DateTime dateFrom, DateTime dateTo);
     Task<List<CashierSalesDto>> GetCashierSalesAsync(DateTime dateFrom, DateTime dateTo);
+    Task<List<CounterSalesDto>> GetCounterSalesAsync(DateTime dateFrom, DateTime dateTo);
 }

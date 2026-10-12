@@ -106,6 +106,7 @@ public class ReportService : IReportService
         (dateFrom, dateTo) = (dateFrom.AsUtc(), dateTo.AsUtc());
 
         var sales = await _db.Sales
+            .Include(s => s.Terminal)
             .Where(s => s.SaleDate >= dateFrom && s.SaleDate <= dateTo && s.Status != SaleStatus.Cancelled)
             .ToListAsync();
 
@@ -120,6 +121,9 @@ public class ReportService : IReportService
             .Select(g =>
             {
                 var user = users.GetValueOrDefault(g.Key);
+                var counterNames = g.Where(s => s.Terminal != null).Select(s => s.Terminal!.Name).Distinct().ToList();
+                var counterName = counterNames.Count > 0 ? string.Join(", ", counterNames) : null;
+                var counterNumber = g.Where(s => s.Terminal != null).Select(s => (int?)s.Terminal!.CounterNumber).FirstOrDefault();
                 var totalSales = g.Count();
                 var totalRevenue = g.Sum(s => s.TotalAmount);
                 var avg = totalSales == 0 ? 0 : totalRevenue / totalSales;
@@ -132,6 +136,8 @@ public class ReportService : IReportService
                     g.Key,
                     user?.FullName ?? "Unknown Cashier",
                     user?.Email,
+                    counterName,
+                    counterNumber,
                     totalSales,
                     totalRevenue,
                     avg,
@@ -142,6 +148,55 @@ public class ReportService : IReportService
                 );
             })
             .OrderByDescending(c => c.TotalRevenue)
+            .ToList();
+    }
+
+    public async Task<List<CounterSalesDto>> GetCounterSalesAsync(DateTime dateFrom, DateTime dateTo)
+    {
+        (dateFrom, dateTo) = (dateFrom.AsUtc(), dateTo.AsUtc());
+
+        var sales = await _db.Sales
+            .Include(s => s.Terminal)
+            .Where(s => s.SaleDate >= dateFrom && s.SaleDate <= dateTo && s.Status != SaleStatus.Cancelled)
+            .ToListAsync();
+
+        var cashierIds = sales.Select(s => s.CashierId).Distinct().ToList();
+
+        var users = await _db.Users
+            .Where(u => cashierIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id);
+
+        return sales
+            .GroupBy(s => s.TerminalId)
+            .Select(g =>
+            {
+                var firstSaleWithTerminal = g.FirstOrDefault(s => s.Terminal != null);
+                var terminal = firstSaleWithTerminal?.Terminal;
+                var counterNumber = terminal?.CounterNumber;
+                var counterName = terminal?.Name ?? (counterNumber.HasValue ? $"Counter {counterNumber}" : "Main Register");
+                var terminalCode = terminal?.TerminalCode;
+                var totalSales = g.Count();
+                var totalRevenue = g.Sum(s => s.TotalAmount);
+                var avg = totalSales == 0 ? 0 : totalRevenue / totalSales;
+                var activeCashiers = g.Select(s => s.CashierId)
+                    .Distinct()
+                    .Select(id => users.TryGetValue(id, out var u) ? u.FullName : "Unknown Cashier")
+                    .OrderBy(name => name)
+                    .ToList();
+
+                return new CounterSalesDto(
+                    g.Key,
+                    counterNumber,
+                    counterName,
+                    terminalCode,
+                    totalSales,
+                    totalRevenue,
+                    avg,
+                    activeCashiers
+                );
+            })
+            .OrderBy(c => c.CounterNumber ?? 999)
+            .ThenBy(c => c.CounterName)
             .ToList();
     }
 }
