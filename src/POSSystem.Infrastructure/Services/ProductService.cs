@@ -32,7 +32,8 @@ public class ProductService : IProductService
             products = products.Where(p =>
                 p.Name.ToLower().Contains(term) ||
                 p.Sku.ToLower().Contains(term) ||
-                (p.Barcode != null && p.Barcode.ToLower().Contains(term)));
+                (p.Barcode != null && p.Barcode.ToLower().Contains(term)) ||
+                (p.Brand != null && p.Brand.ToLower().Contains(term)));
         }
 
         if (query.CategoryId.HasValue)
@@ -130,6 +131,7 @@ public class ProductService : IProductService
             StockQuantity = request.InitialStock,
             ReorderLevel = request.ReorderLevel,
             ImageUrl = request.ImageUrl,
+            Brand = request.Brand?.Trim(),
             PriceTiers = tiers,
         };
 
@@ -178,6 +180,7 @@ public class ProductService : IProductService
         product.Barcode = request.Barcode;
         product.Name = request.Name;
         product.Description = request.Description;
+        product.Brand = request.Brand?.Trim();
         product.CategoryId = request.CategoryId;
         product.CostPrice = request.CostPrice;
         product.RetailPrice = request.RetailPrice;
@@ -326,7 +329,8 @@ public class ProductService : IProductService
             .OrderBy(t => t.Quantity)
             .Select(t => new PriceTierDto(t.Id, t.Quantity, t.RetailPrice, t.WholesalePrice, t.SpecialPrice))
             .ToList(),
-        PromotionCalculator.GetActivePromotion(p.Promotions));
+        PromotionCalculator.GetActivePromotion(p.Promotions),
+        p.Brand);
 
     public async Task<string> GenerateNextSkuAsync(Guid categoryId)
     {
