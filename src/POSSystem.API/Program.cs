@@ -7,8 +7,38 @@ using POSSystem.API.Middleware;
 using POSSystem.Infrastructure;
 using POSSystem.Infrastructure.Identity;
 using POSSystem.Infrastructure.Persistence;
+// Load .env file into environment if present
+var potentialEnvPaths = new[]
+{
+    Path.Combine(Directory.GetCurrentDirectory(), ".env"),
+    Path.Combine(Directory.GetCurrentDirectory(), "..", ".env"),
+    Path.Combine(Directory.GetCurrentDirectory(), "..", "..", ".env"),
+    Path.Combine(AppContext.BaseDirectory, ".env"),
+    Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".env")
+};
+
+foreach (var envPath in potentialEnvPaths)
+{
+    if (File.Exists(envPath))
+    {
+        foreach (var rawLine in File.ReadAllLines(envPath))
+        {
+            var line = rawLine.Trim();
+            if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#")) continue;
+            var eqIdx = line.IndexOf('=');
+            if (eqIdx > 0)
+            {
+                var key = line[..eqIdx].Trim();
+                var val = line[(eqIdx + 1)..].Trim().Trim('"', '\'');
+                Environment.SetEnvironmentVariable(key, val);
+            }
+        }
+        break;
+    }
+}
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddEnvironmentVariables();
 
 builder.Services.AddControllers();
 

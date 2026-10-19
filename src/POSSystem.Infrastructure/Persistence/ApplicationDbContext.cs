@@ -27,6 +27,9 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
     public DbSet<LoyaltyTransaction> LoyaltyTransactions => Set<LoyaltyTransaction>();
     public DbSet<StoreSetting> StoreSettings => Set<StoreSetting>();
     public DbSet<TerminalSetting> TerminalSettings => Set<TerminalSetting>();
+    public DbSet<Cheque> Cheques => Set<Cheque>();
+    public DbSet<ChequeNotificationRecipient> ChequeNotificationRecipients => Set<ChequeNotificationRecipient>();
+    public DbSet<WhatsAppSetting> WhatsAppSettings => Set<WhatsAppSetting>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -61,5 +64,8 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
         builder.Entity<LoyaltyTransaction>().HasQueryFilter(e => !e.IsDeleted);
         builder.Entity<StoreSetting>().HasQueryFilter(e => !e.IsDeleted);
         builder.Entity<TerminalSetting>().HasQueryFilter(e => !e.IsDeleted);
+        builder.Entity<Cheque>().HasQueryFilter(e => !e.IsDeleted);
+        builder.Entity<ChequeNotificationRecipient>().HasQueryFilter(e => !e.IsDeleted);
+        builder.Entity<WhatsAppSetting>().HasQueryFilter(e => !e.IsDeleted);
     }
 }

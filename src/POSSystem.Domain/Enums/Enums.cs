@@ -50,6 +50,14 @@ public enum PromotionType
     FixedPriceBundle = 2
 }
 
+public enum ChequeStatus
+{
+    Pending = 0,
+    Cleared = 1,
+    Bounced = 2,
+    Cancelled = 3
+}
+
 public static class Roles
 {
     public const string Admin = "Admin";
