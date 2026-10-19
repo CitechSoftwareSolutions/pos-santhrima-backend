@@ -14,6 +14,7 @@ using POSSystem.Application.Features.Sales;
 using POSSystem.Application.Features.Settings;
 using POSSystem.Application.Features.Suppliers;
 using POSSystem.Application.Features.Terminals;
+using POSSystem.Application.Features.Cheques;
 using POSSystem.Infrastructure.Identity;
 using POSSystem.Infrastructure.Persistence;
 using POSSystem.Infrastructure.Services;
@@ -44,6 +45,7 @@ public static class DependencyInjection
             .AddDefaultTokenProviders();
 
         services.AddHttpContextAccessor();
+        services.AddHttpClient();
 
         services.AddScoped<ITokenService, TokenService>();
         services.AddScoped<IAuthService, AuthService>();
@@ -59,6 +61,11 @@ public static class DependencyInjection
         services.AddScoped<IPromotionService, PromotionService>();
         services.AddScoped<ISettingsService, SettingsService>();
         services.AddScoped<ITerminalService, TerminalService>();
+
+        services.AddScoped<IWhatsAppNotificationService, WhatsAppNotificationService>();
+        services.AddScoped<IChequeService, ChequeService>();
+
+        services.AddHostedService<BackgroundServices.ChequeDueNotificationBackgroundService>();
 
         return services;
     }
