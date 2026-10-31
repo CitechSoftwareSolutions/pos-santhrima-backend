@@ -130,69 +130,91 @@ public class SalesShiftService : ISalesShiftService
 
         await SyncParentEntitiesAsync(_normalDb, adminDb, salesToShift, cashierId, cancellationToken);
 
+        // Map to keep track of any re-numbered sales for stock movement references
+        var saleNumberMap = new Dictionary<string, string>();
+
         foreach (var sale in salesToShift)
         {
-            var exists = await adminDb.Sales.AnyAsync(s => s.Id == sale.Id, cancellationToken);
-            if (!exists)
+            var existingSale = await adminDb.Sales.FirstOrDefaultAsync(
+                s => s.Id == sale.Id || s.SaleNumber == sale.SaleNumber, cancellationToken);
+
+            if (existingSale != null && existingSale.Id == sale.Id)
             {
-                var adminSale = new Sale
-                {
-                    Id = sale.Id,
-                    SaleNumber = sale.SaleNumber,
-                    CustomerId = sale.CustomerId,
-                    CashierId = sale.CashierId,
-                    TerminalId = sale.TerminalId,
-                    SaleDate = sale.SaleDate,
-                    SubTotal = sale.SubTotal,
-                    TaxAmount = sale.TaxAmount,
-                    DiscountAmount = sale.DiscountAmount,
-                    TotalAmount = sale.TotalAmount,
-                    AmountPaid = sale.AmountPaid,
-                    ChangeDue = sale.ChangeDue,
-                    LoyaltyPointsRedeemed = sale.LoyaltyPointsRedeemed,
-                    LoyaltyPointsEarned = sale.LoyaltyPointsEarned,
-                    Status = sale.Status,
-                    PaymentStatus = sale.PaymentStatus,
-                    Notes = sale.Notes,
-                    CreatedAt = sale.CreatedAt,
-                    UpdatedAt = DateTime.UtcNow,
-                    IsDeleted = false
-                };
-
-                foreach (var item in sale.Items)
-                {
-                    adminSale.Items.Add(new SaleItem
-                    {
-                        Id = item.Id,
-                        SaleId = sale.Id,
-                        ProductId = item.ProductId,
-                        ProductName = item.ProductName,
-                        Quantity = item.Quantity,
-                        UnitPrice = item.UnitPrice,
-                        DiscountAmount = item.DiscountAmount,
-                        TaxAmount = item.TaxAmount,
-                        LineTotal = item.LineTotal,
-                        PromotionId = item.PromotionId,
-                        PromotionName = item.PromotionName,
-                        PromotionDiscountAmount = item.PromotionDiscountAmount
-                    });
-                }
-
-                foreach (var payment in sale.Payments)
-                {
-                    adminSale.Payments.Add(new Payment
-                    {
-                        Id = payment.Id,
-                        SaleId = sale.Id,
-                        Method = payment.Method,
-                        Amount = payment.Amount,
-                        PaymentDate = payment.PaymentDate,
-                        ReferenceNumber = payment.ReferenceNumber
-                    });
-                }
-
-                adminDb.Sales.Add(adminSale);
+                // Already migrated with same Id
+                saleNumberMap[sale.SaleNumber] = existingSale.SaleNumber;
+                continue;
             }
+
+            var saleNumberToUse = sale.SaleNumber;
+            if (existingSale != null && existingSale.Id != sale.Id)
+            {
+                // Collision with existing sale number in Admin DB: dynamically assign next monotonic sequence
+                saleNumberToUse = await GetNextAvailableSaleNumberAsync(adminDb, sale.SaleDate, cancellationToken);
+                _logger.LogWarning(
+                    "Sale {OriginalNumber} (Id {Id}) collided with existing sale in Admin DB. Re-assigned to {NewNumber}.",
+                    sale.SaleNumber, sale.Id, saleNumberToUse);
+            }
+
+            saleNumberMap[sale.SaleNumber] = saleNumberToUse;
+
+            var adminSale = new Sale
+            {
+                Id = sale.Id,
+                SaleNumber = saleNumberToUse,
+                CustomerId = sale.CustomerId,
+                CashierId = sale.CashierId,
+                TerminalId = sale.TerminalId,
+                SaleDate = sale.SaleDate,
+                SubTotal = sale.SubTotal,
+                TaxAmount = sale.TaxAmount,
+                DiscountAmount = sale.DiscountAmount,
+                TotalAmount = sale.TotalAmount,
+                AmountPaid = sale.AmountPaid,
+                ChangeDue = sale.ChangeDue,
+                LoyaltyPointsRedeemed = sale.LoyaltyPointsRedeemed,
+                LoyaltyPointsEarned = sale.LoyaltyPointsEarned,
+                Status = sale.Status,
+                PaymentStatus = sale.PaymentStatus,
+                Notes = sale.Notes,
+                CreatedAt = sale.CreatedAt,
+                UpdatedAt = DateTime.UtcNow,
+                IsDeleted = false
+            };
+
+            foreach (var item in sale.Items)
+            {
+                adminSale.Items.Add(new SaleItem
+                {
+                    Id = item.Id,
+                    SaleId = sale.Id,
+                    ProductId = item.ProductId,
+                    ProductName = item.ProductName,
+                    Quantity = item.Quantity,
+                    UnitPrice = item.UnitPrice,
+                    DiscountAmount = item.DiscountAmount,
+                    TaxAmount = item.TaxAmount,
+                    LineTotal = item.LineTotal,
+                    PromotionId = item.PromotionId,
+                    PromotionName = item.PromotionName,
+                    PromotionDiscountAmount = item.PromotionDiscountAmount
+                });
+            }
+
+            foreach (var payment in sale.Payments)
+            {
+                adminSale.Payments.Add(new Payment
+                {
+                    Id = payment.Id,
+                    SaleId = sale.Id,
+                    Method = payment.Method,
+                    Amount = payment.Amount,
+                    PaymentDate = payment.PaymentDate,
+                    ReferenceNumber = payment.ReferenceNumber
+                });
+            }
+
+            adminDb.Sales.Add(adminSale);
+            await adminDb.SaveChangesAsync(cancellationToken);
         }
 
         foreach (var sm in stockMovements)
@@ -200,6 +222,10 @@ public class SalesShiftService : ISalesShiftService
             var exists = await adminDb.StockMovements.AnyAsync(s => s.Id == sm.Id, cancellationToken);
             if (!exists)
             {
+                var refToUse = sm.Reference != null && saleNumberMap.TryGetValue(sm.Reference, out var mappedRef)
+                    ? mappedRef
+                    : sm.Reference;
+
                 adminDb.StockMovements.Add(new StockMovement
                 {
                     Id = sm.Id,
@@ -207,7 +233,7 @@ public class SalesShiftService : ISalesShiftService
                     Type = sm.Type,
                     QuantityChange = sm.QuantityChange,
                     StockAfter = sm.StockAfter,
-                    Reference = sm.Reference,
+                    Reference = refToUse,
                     Notes = sm.Notes,
                     PerformedByUserId = sm.PerformedByUserId,
                     CreatedAt = sm.CreatedAt
@@ -244,6 +270,18 @@ public class SalesShiftService : ISalesShiftService
         }
         await _normalDb.SaveChangesAsync(cancellationToken);
 
+        // Explicitly remove child collections to ensure clean deletion
+        var itemsToRemove = salesToShift.SelectMany(s => s.Items).ToList();
+        var paymentsToRemove = salesToShift.SelectMany(s => s.Payments).ToList();
+        if (itemsToRemove.Count > 0)
+        {
+            _normalDb.SaleItems.RemoveRange(itemsToRemove);
+        }
+        if (paymentsToRemove.Count > 0)
+        {
+            _normalDb.Payments.RemoveRange(paymentsToRemove);
+        }
+
         // Now delete sales and stock movements from normal DB
         _normalDb.Sales.RemoveRange(salesToShift);
         if (stockMovements.Count > 0)
@@ -262,6 +300,32 @@ public class SalesShiftService : ISalesShiftService
             salesToShift.Count,
             totalAmount,
             $"Successfully transferred {salesToShift.Count} sales (Rs. {totalAmount:N2}) to Admin database and reset cashier active tally.");
+    }
+
+    private static async Task<string> GetNextAvailableSaleNumberAsync(ApplicationDbContext adminDb, DateTime saleDate, CancellationToken cancellationToken)
+    {
+        var date = saleDate.Date;
+        var prefix = $"SALE-{date:yyyyMMdd}-";
+
+        var existingNumbers = await adminDb.Sales
+            .Where(s => s.SaleNumber.StartsWith(prefix))
+            .Select(s => s.SaleNumber)
+            .ToListAsync(cancellationToken);
+
+        int maxSeq = 0;
+        foreach (var sn in existingNumbers)
+        {
+            if (sn.Length > prefix.Length)
+            {
+                var suffix = sn.Substring(prefix.Length);
+                if (int.TryParse(suffix, out var seq) && seq > maxSeq)
+                {
+                    maxSeq = seq;
+                }
+            }
+        }
+
+        return $"{prefix}{(maxSeq + 1):D4}";
     }
 
     private static async Task SyncParentEntitiesAsync(
@@ -410,6 +474,39 @@ public class SalesShiftService : ISalesShiftService
                         AllowDecimalQuantity = normalProd.AllowDecimalQuantity,
                         ImageUrl = normalProd.ImageUrl,
                         CreatedAt = normalProd.CreatedAt
+                    });
+                    await adminDb.SaveChangesAsync(cancellationToken);
+                }
+            }
+        }
+
+        // Sync Promotions
+        var promoIds = sales.SelectMany(s => s.Items).Where(i => i.PromotionId.HasValue).Select(i => i.PromotionId!.Value).Distinct().ToList();
+        foreach (var pmid in promoIds)
+        {
+            var promoExists = await adminDb.Promotions.AnyAsync(p => p.Id == pmid, cancellationToken);
+            if (!promoExists)
+            {
+                var normalPromo = await normalDb.Promotions.AsNoTracking().FirstOrDefaultAsync(p => p.Id == pmid, cancellationToken);
+                if (normalPromo != null)
+                {
+                    adminDb.Promotions.Add(new Promotion
+                    {
+                        Id = normalPromo.Id,
+                        Name = normalPromo.Name,
+                        Description = normalPromo.Description,
+                        Type = normalPromo.Type,
+                        ProductId = normalPromo.ProductId,
+                        BuyQuantity = normalPromo.BuyQuantity,
+                        FreeQuantity = normalPromo.FreeQuantity,
+                        MinQuantity = normalPromo.MinQuantity,
+                        DiscountPercent = normalPromo.DiscountPercent,
+                        BundleQuantity = normalPromo.BundleQuantity,
+                        BundlePrice = normalPromo.BundlePrice,
+                        StartDate = normalPromo.StartDate,
+                        EndDate = normalPromo.EndDate,
+                        IsActive = normalPromo.IsActive,
+                        CreatedAt = normalPromo.CreatedAt
                     });
                     await adminDb.SaveChangesAsync(cancellationToken);
                 }

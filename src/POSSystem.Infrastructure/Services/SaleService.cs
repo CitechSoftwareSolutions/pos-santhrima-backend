@@ -86,6 +86,18 @@ public class SaleService : ISaleService
 
         if (!_dbResolver.IsAdminMode())
         {
+            if (_salesShiftService != null)
+            {
+                try
+                {
+                    await _salesShiftService.CheckAndShiftAllEligibleCashiersAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Could not check and shift eligible cashiers during GetAllAsync.");
+                }
+            }
+
             var sales = ApplyFilters(_db.Sales);
             var totalCount = await sales.CountAsync();
 
@@ -670,8 +682,34 @@ public class SaleService : ISaleService
     private async Task<string> GenerateSaleNumberAsync()
     {
         var today = DateTime.UtcNow.Date;
-        var countToday = await _db.Sales.CountAsync(s => s.SaleDate >= today);
-        return $"SALE-{today:yyyyMMdd}-{(countToday + 1):D4}";
+        var prefix = $"SALE-{today:yyyyMMdd}-";
+
+        using var adminDb = _dbFactory.CreateAdminDbContext();
+
+        var normalNumbers = await _db.Sales
+            .Where(s => s.SaleNumber.StartsWith(prefix))
+            .Select(s => s.SaleNumber)
+            .ToListAsync();
+
+        var adminNumbers = await adminDb.Sales
+            .Where(s => s.SaleNumber.StartsWith(prefix))
+            .Select(s => s.SaleNumber)
+            .ToListAsync();
+
+        int maxSeq = 0;
+        foreach (var sn in normalNumbers.Concat(adminNumbers))
+        {
+            if (sn.Length > prefix.Length)
+            {
+                var suffix = sn.Substring(prefix.Length);
+                if (int.TryParse(suffix, out var seq) && seq > maxSeq)
+                {
+                    maxSeq = seq;
+                }
+            }
+        }
+
+        return $"{prefix}{(maxSeq + 1):D4}";
     }
 
     private async Task<SaleDto> ToDtoAsync(Sale sale)
