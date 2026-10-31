@@ -98,6 +98,8 @@ public class SalesShiftService : ISalesShiftService
 
     private async Task<SalesShiftResult> ExecuteShiftAsync(Guid cashierId, CancellationToken cancellationToken)
     {
+        using var _ = DualDatabaseSyncInterceptor.BeginSuppression();
+
         var salesToShift = await _normalDb.Sales
             .Include(s => s.Items)
             .Include(s => s.Payments)

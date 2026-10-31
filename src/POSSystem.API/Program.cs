@@ -169,6 +169,33 @@ using (var scope = app.Services.CreateScope())
     {
         logger.LogWarning(ex, "Could not run startup sales shift check.");
     }
+
+    // 4. Align product stocks between Normal and Admin DBs if any historical mismatch exists
+    try
+    {
+        using var normalDb = dbFactory.CreateNormalDbContext();
+        using var adminDb = dbFactory.CreateAdminDbContext();
+        var normalStocks = await normalDb.Products.AsNoTracking().Select(p => new { p.Id, p.StockQuantity }).ToDictionaryAsync(p => p.Id, p => p.StockQuantity);
+        var adminProds = await adminDb.Products.ToListAsync();
+        bool changed = false;
+        foreach (var ap in adminProds)
+        {
+            if (normalStocks.TryGetValue(ap.Id, out var nStock) && ap.StockQuantity != nStock)
+            {
+                ap.StockQuantity = nStock;
+                changed = true;
+            }
+        }
+        if (changed)
+        {
+            await adminDb.SaveChangesAsync();
+            logger.LogInformation("Startup: Synchronized product stock quantities to Admin DB.");
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Could not run startup product stock alignment.");
+    }
 }
 
 app.Run();

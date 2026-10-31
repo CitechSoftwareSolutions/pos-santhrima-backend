@@ -29,13 +29,15 @@ public static class DependencyInjection
         services.AddScoped<IDatabaseContextResolver, DatabaseContextResolver>();
         services.AddScoped<IApplicationDbContextFactory, ApplicationDbContextFactory>();
         services.AddScoped<ISalesShiftService, SalesShiftService>();
+        services.AddScoped<DualDatabaseSyncInterceptor>();
 
         services.AddDbContext<ApplicationDbContext>((sp, options) =>
         {
             var resolver = sp.GetRequiredService<IDatabaseContextResolver>();
             var connStr = resolver.GetActiveConnectionString();
             options.UseNpgsql(connStr)
-                   .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
+                   .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning))
+                   .AddInterceptors(sp.GetRequiredService<DualDatabaseSyncInterceptor>());
         }, ServiceLifetime.Scoped, ServiceLifetime.Scoped);
 
         services.Configure<JwtSettings>(configuration.GetSection(JwtSettings.SectionName));
