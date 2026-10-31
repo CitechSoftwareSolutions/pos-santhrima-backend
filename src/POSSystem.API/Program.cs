@@ -138,6 +138,7 @@ using (var scope = app.Services.CreateScope())
     using (var normalDb = dbFactory.CreateNormalDbContext())
     {
         await normalDb.Database.MigrateAsync();
+        await EnsureStoreSettingsColumnsAsync(normalDb, logger);
     }
     await DbSeeder.SeedAsync(scope.ServiceProvider);
 
@@ -147,6 +148,7 @@ using (var scope = app.Services.CreateScope())
     using (var adminDb = dbFactory.CreateAdminDbContext())
     {
         await adminDb.Database.MigrateAsync();
+        await EnsureStoreSettingsColumnsAsync(adminDb, logger);
         await DbSeeder.SeedIntoContextAsync(adminDb, scope.ServiceProvider);
     }
 }
@@ -182,5 +184,22 @@ static async Task EnsureDatabaseExistsAsync(string connectionString, ILogger log
     catch (Exception ex)
     {
         logger.LogWarning(ex, "Could not verify/create database via maintenance connection. Will attempt direct EF migration.");
+    }
+}
+
+static async Task EnsureStoreSettingsColumnsAsync(ApplicationDbContext db, ILogger logger)
+{
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""CashierSalesShiftThreshold"" numeric NOT NULL DEFAULT 60000;
+            ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""CashierSalesShiftEnabled"" boolean NOT NULL DEFAULT true;
+            ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""HotkeyBindingsJson"" text NULL;
+        ");
+        logger.LogInformation("Verified StoreSettings schema columns for active context.");
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Could not ensure StoreSettings columns via raw SQL.");
     }
 }

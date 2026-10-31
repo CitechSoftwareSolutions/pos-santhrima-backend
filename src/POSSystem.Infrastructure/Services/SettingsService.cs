@@ -8,7 +8,7 @@ namespace POSSystem.Infrastructure.Services;
 public class SettingsService : ISettingsService
 {
     private readonly ApplicationDbContext _db;
-    private static bool _initialized = false;
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _initializedDbs = new();
     private static readonly SemaphoreSlim _initLock = new(1, 1);
 
     public SettingsService(ApplicationDbContext db)
@@ -18,12 +18,13 @@ public class SettingsService : ISettingsService
 
     private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
     {
-        if (_initialized) return;
+        var connStr = _db.Database.GetDbConnection().ConnectionString ?? string.Empty;
+        if (_initializedDbs.ContainsKey(connStr)) return;
 
         await _initLock.WaitAsync(cancellationToken);
         try
         {
-            if (_initialized) return;
+            if (_initializedDbs.ContainsKey(connStr)) return;
 
             // Ensure table exists via raw SQL fallback if migration hasn't been executed
             var createTableSql = @"
@@ -46,23 +47,10 @@ public class SettingsService : ISettingsService
                     ""IsDeleted"" boolean NOT NULL DEFAULT false
                 );";
 
-            try
-            {
-                await _db.Database.ExecuteSqlRawAsync(createTableSql, cancellationToken);
-                await _db.Database.ExecuteSqlRawAsync(
-                    @"ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""HotkeyBindingsJson"" text NULL;",
-                    cancellationToken);
-                await _db.Database.ExecuteSqlRawAsync(
-                    @"ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""CashierSalesShiftThreshold"" numeric NOT NULL DEFAULT 60000;",
-                    cancellationToken);
-                await _db.Database.ExecuteSqlRawAsync(
-                    @"ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""CashierSalesShiftEnabled"" boolean NOT NULL DEFAULT true;",
-                    cancellationToken);
-            }
-            catch
-            {
-                // Ignore if DB already managed by migrations
-            }
+            try { await _db.Database.ExecuteSqlRawAsync(createTableSql, cancellationToken); } catch {}
+            try { await _db.Database.ExecuteSqlRawAsync(@"ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""HotkeyBindingsJson"" text NULL;", cancellationToken); } catch {}
+            try { await _db.Database.ExecuteSqlRawAsync(@"ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""CashierSalesShiftThreshold"" numeric NOT NULL DEFAULT 60000;", cancellationToken); } catch {}
+            try { await _db.Database.ExecuteSqlRawAsync(@"ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""CashierSalesShiftEnabled"" boolean NOT NULL DEFAULT true;", cancellationToken); } catch {}
 
             // Seed default settings row if table is empty
             var existing = await _db.StoreSettings.IgnoreQueryFilters().FirstOrDefaultAsync(cancellationToken);
@@ -91,7 +79,7 @@ public class SettingsService : ISettingsService
                 await _db.SaveChangesAsync(cancellationToken);
             }
 
-            _initialized = true;
+            _initializedDbs.TryAdd(connStr, true);
         }
         finally
         {
