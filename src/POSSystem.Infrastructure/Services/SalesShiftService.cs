@@ -27,6 +27,41 @@ public class SalesShiftService : ISalesShiftService
         _logger = logger;
     }
 
+    public async Task<List<SalesShiftResult>> CheckAndShiftAllEligibleCashiersAsync(CancellationToken cancellationToken = default)
+    {
+        var results = new List<SalesShiftResult>();
+
+        if (_dbResolver.IsAdminMode())
+        {
+            return results;
+        }
+
+        var setting = await _normalDb.StoreSettings.AsNoTracking().FirstOrDefaultAsync(cancellationToken);
+        if (setting != null && !setting.CashierSalesShiftEnabled)
+        {
+            return results;
+        }
+
+        var threshold = setting?.CashierSalesShiftThreshold > 0 ? setting.CashierSalesShiftThreshold : 60000m;
+
+        var eligibleCashiers = await _normalDb.Sales
+            .Where(s => s.Status == SaleStatus.Completed && !s.IsDeleted)
+            .GroupBy(s => s.CashierId)
+            .Select(g => new { CashierId = g.Key, Total = g.Sum(s => s.TotalAmount) })
+            .Where(x => x.Total >= threshold)
+            .ToListAsync(cancellationToken);
+
+        foreach (var c in eligibleCashiers)
+        {
+            _logger.LogInformation("Cashier {CashierId} qualifies for shift with unshifted total Rs. {Total:N2} (threshold Rs. {Threshold:N2}). Shifting...",
+                c.CashierId, c.Total, threshold);
+            var res = await ExecuteShiftAsync(c.CashierId, cancellationToken);
+            results.Add(res);
+        }
+
+        return results;
+    }
+
     public async Task<SalesShiftResult> CheckAndShiftCashierSalesAsync(Guid cashierId, CancellationToken cancellationToken = default)
     {
         if (_dbResolver.IsAdminMode())
@@ -41,41 +76,32 @@ public class SalesShiftService : ISalesShiftService
         }
 
         var threshold = setting?.CashierSalesShiftThreshold > 0 ? setting.CashierSalesShiftThreshold : 60000m;
-        var todayUtc = DateTime.UtcNow.Date;
 
-        var cashierTodayTotal = await _normalDb.Sales
+        var cashierUnshiftedTotal = await _normalDb.Sales
             .Where(s => s.CashierId == cashierId &&
-                        s.SaleDate >= todayUtc &&
                         s.Status == SaleStatus.Completed &&
                         !s.IsDeleted)
             .SumAsync(s => s.TotalAmount, cancellationToken);
 
-        if (cashierTodayTotal < threshold)
+        if (cashierUnshiftedTotal < threshold)
         {
             return new SalesShiftResult(false, 0, 0,
-                $"Cashier sales total Rs. {cashierTodayTotal:N2} is below the threshold of Rs. {threshold:N2}.");
+                $"Cashier unshifted sales total Rs. {cashierUnshiftedTotal:N2} is below the threshold of Rs. {threshold:N2}.");
         }
 
         _logger.LogInformation(
-            "Cashier {CashierId} reached threshold Rs. {Threshold:N2} with today's total Rs. {Total:N2}. Shifting to Admin database...",
-            cashierId, threshold, cashierTodayTotal);
+            "Cashier {CashierId} reached threshold Rs. {Threshold:N2} with unshifted total Rs. {Total:N2}. Shifting to Admin database...",
+            cashierId, threshold, cashierUnshiftedTotal);
 
-        return await ExecuteShiftAsync(cashierId, todayUtc, cancellationToken);
+        return await ExecuteShiftAsync(cashierId, cancellationToken);
     }
 
-    public async Task<SalesShiftResult> ManualShiftCashierSalesAsync(Guid cashierId, CancellationToken cancellationToken = default)
-    {
-        var todayUtc = DateTime.UtcNow.Date;
-        return await ExecuteShiftAsync(cashierId, todayUtc, cancellationToken);
-    }
-
-    private async Task<SalesShiftResult> ExecuteShiftAsync(Guid cashierId, DateTime fromDateUtc, CancellationToken cancellationToken)
+    private async Task<SalesShiftResult> ExecuteShiftAsync(Guid cashierId, CancellationToken cancellationToken)
     {
         var salesToShift = await _normalDb.Sales
             .Include(s => s.Items)
             .Include(s => s.Payments)
             .Where(s => s.CashierId == cashierId &&
-                        s.SaleDate >= fromDateUtc &&
                         s.Status == SaleStatus.Completed &&
                         !s.IsDeleted)
             .OrderBy(s => s.SaleDate)
@@ -88,13 +114,17 @@ public class SalesShiftService : ISalesShiftService
 
         var totalAmount = salesToShift.Sum(s => s.TotalAmount);
         var saleNumbers = salesToShift.Select(s => s.SaleNumber).ToList();
+        var saleIds = salesToShift.Select(s => s.Id).ToList();
 
         var stockMovements = await _normalDb.StockMovements
             .Where(sm => sm.Reference != null && saleNumbers.Contains(sm.Reference))
             .ToListAsync(cancellationToken);
 
+        var loyaltyTransactions = await _normalDb.LoyaltyTransactions
+            .Where(lt => lt.SaleId.HasValue && saleIds.Contains(lt.SaleId.Value))
+            .ToListAsync(cancellationToken);
+
         using var adminDb = _dbFactory.CreateAdminDbContext();
-        await adminDb.Database.MigrateAsync(cancellationToken);
 
         await SyncParentEntitiesAsync(_normalDb, adminDb, salesToShift, cashierId, cancellationToken);
 
@@ -183,8 +213,36 @@ public class SalesShiftService : ISalesShiftService
             }
         }
 
+        foreach (var lt in loyaltyTransactions)
+        {
+            var exists = await adminDb.LoyaltyTransactions.AnyAsync(a => a.Id == lt.Id, cancellationToken);
+            if (!exists)
+            {
+                adminDb.LoyaltyTransactions.Add(new LoyaltyTransaction
+                {
+                    Id = lt.Id,
+                    CustomerId = lt.CustomerId,
+                    SaleId = lt.SaleId,
+                    Type = lt.Type,
+                    Points = lt.Points,
+                    PointsRemaining = lt.PointsRemaining,
+                    ExpiresAt = lt.ExpiresAt,
+                    Notes = lt.Notes,
+                    CreatedAt = lt.CreatedAt
+                });
+            }
+        }
+
         await adminDb.SaveChangesAsync(cancellationToken);
 
+        // In normal DB, decouple loyalty transactions before removing sales to satisfy FK constraints
+        foreach (var lt in loyaltyTransactions)
+        {
+            lt.SaleId = null;
+        }
+        await _normalDb.SaveChangesAsync(cancellationToken);
+
+        // Now delete sales and stock movements from normal DB
         _normalDb.Sales.RemoveRange(salesToShift);
         if (stockMovements.Count > 0)
         {

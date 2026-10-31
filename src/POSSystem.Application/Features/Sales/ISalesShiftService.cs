@@ -15,7 +15,7 @@ public interface ISalesShiftService
     Task<SalesShiftResult> CheckAndShiftCashierSalesAsync(Guid cashierId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Manually triggers shifting all current sales of a cashier to the Admin database.
+    /// Checks all cashiers with today's sales and shifts any cashier whose total >= threshold.
     /// </summary>
-    Task<SalesShiftResult> ManualShiftCashierSalesAsync(Guid cashierId, CancellationToken cancellationToken = default);
+    Task<List<SalesShiftResult>> CheckAndShiftAllEligibleCashiersAsync(CancellationToken cancellationToken = default);
 }

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using POSSystem.Application.Common.Exceptions;
 using POSSystem.Application.Common.Models;
 using POSSystem.Application.Features.Products;
@@ -14,11 +15,16 @@ public class SaleService : ISaleService
 {
     private readonly ApplicationDbContext _db;
     private readonly ISalesShiftService? _salesShiftService;
+    private readonly ILogger<SaleService>? _logger;
 
-    public SaleService(ApplicationDbContext db, ISalesShiftService? salesShiftService = null)
+    public SaleService(
+        ApplicationDbContext db,
+        ISalesShiftService? salesShiftService = null,
+        ILogger<SaleService>? logger = null)
     {
         _db = db;
         _salesShiftService = salesShiftService;
+        _logger = logger;
     }
 
     public async Task<PagedResult<SaleListItemDto>> GetAllAsync(SaleQueryParams query)
@@ -375,9 +381,9 @@ public class SaleService : ISaleService
             {
                 await _salesShiftService.CheckAndShiftCashierSalesAsync(cashierId);
             }
-            catch
+            catch (Exception ex)
             {
-                // Background shifting should not fail the completed checkout
+                _logger?.LogError(ex, "Failed to auto-shift cashier sales after sale {SaleNumber}", sale.SaleNumber);
             }
         }
 

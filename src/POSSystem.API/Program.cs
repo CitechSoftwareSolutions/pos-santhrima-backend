@@ -151,6 +151,24 @@ using (var scope = app.Services.CreateScope())
         await EnsureStoreSettingsColumnsAsync(adminDb, logger);
         await DbSeeder.SeedIntoContextAsync(adminDb, scope.ServiceProvider);
     }
+
+    // 3. Process any pending shifts for cashiers exceeding threshold
+    try
+    {
+        var shiftService = scope.ServiceProvider.GetRequiredService<POSSystem.Application.Features.Sales.ISalesShiftService>();
+        var shiftedResults = await shiftService.CheckAndShiftAllEligibleCashiersAsync();
+        foreach (var r in shiftedResults)
+        {
+            if (r.Shifted)
+            {
+                logger.LogInformation("Startup Sales Shift: {Message}", r.Message);
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Could not run startup sales shift check.");
+    }
 }
 
 app.Run();
