@@ -47,14 +47,14 @@ public class SalesShiftService : ISalesShiftService
         var eligibleCashiers = await _normalDb.Sales
             .Where(s => s.Status == SaleStatus.Completed && !s.IsDeleted)
             .GroupBy(s => s.CashierId)
-            .Select(g => new { CashierId = g.Key, Total = g.Sum(s => s.TotalAmount) })
-            .Where(x => x.Total >= threshold)
+            .Select(g => new { CashierId = g.Key, Total = g.Sum(s => s.TotalAmount), Count = g.Count() })
+            .Where(x => x.Total >= threshold && x.Count > 1)
             .ToListAsync(cancellationToken);
 
         foreach (var c in eligibleCashiers)
         {
-            _logger.LogInformation("Cashier {CashierId} qualifies for shift with unshifted total Rs. {Total:N2} (threshold Rs. {Threshold:N2}). Shifting...",
-                c.CashierId, c.Total, threshold);
+            _logger.LogInformation("Cashier {CashierId} qualifies for shift with unshifted total Rs. {Total:N2} across {Count} sales (threshold Rs. {Threshold:N2}). Shifting previous sales and keeping latest sale...",
+                c.CashierId, c.Total, c.Count, threshold);
             var res = await ExecuteShiftAsync(c.CashierId, cancellationToken);
             results.Add(res);
         }
@@ -77,11 +77,13 @@ public class SalesShiftService : ISalesShiftService
 
         var threshold = setting?.CashierSalesShiftThreshold > 0 ? setting.CashierSalesShiftThreshold : 60000m;
 
-        var cashierUnshiftedTotal = await _normalDb.Sales
+        var cashierSalesQuery = _normalDb.Sales
             .Where(s => s.CashierId == cashierId &&
                         s.Status == SaleStatus.Completed &&
-                        !s.IsDeleted)
-            .SumAsync(s => s.TotalAmount, cancellationToken);
+                        !s.IsDeleted);
+
+        var cashierUnshiftedTotal = await cashierSalesQuery.SumAsync(s => s.TotalAmount, cancellationToken);
+        var cashierSalesCount = await cashierSalesQuery.CountAsync(cancellationToken);
 
         if (cashierUnshiftedTotal < threshold)
         {
@@ -89,9 +91,15 @@ public class SalesShiftService : ISalesShiftService
                 $"Cashier unshifted sales total Rs. {cashierUnshiftedTotal:N2} is below the threshold of Rs. {threshold:N2}.");
         }
 
+        if (cashierSalesCount <= 1)
+        {
+            return new SalesShiftResult(false, 0, 0,
+                $"Cashier reached threshold Rs. {threshold:N2} with Rs. {cashierUnshiftedTotal:N2}, but only 1 sale exists. Keeping the current transaction in normal database.");
+        }
+
         _logger.LogInformation(
-            "Cashier {CashierId} reached threshold Rs. {Threshold:N2} with unshifted total Rs. {Total:N2}. Shifting to Admin database...",
-            cashierId, threshold, cashierUnshiftedTotal);
+            "Cashier {CashierId} reached threshold Rs. {Threshold:N2} with unshifted total Rs. {Total:N2} across {Count} sales. Shifting previous sales to Admin database while retaining the latest sale...",
+            cashierId, threshold, cashierUnshiftedTotal, cashierSalesCount);
 
         return await ExecuteShiftAsync(cashierId, cancellationToken);
     }
@@ -100,23 +108,32 @@ public class SalesShiftService : ISalesShiftService
     {
         using var _ = DualDatabaseSyncInterceptor.BeginSuppression();
 
-        var salesToShift = await _normalDb.Sales
+        var allSales = await _normalDb.Sales
             .Include(s => s.Items)
             .Include(s => s.Payments)
             .Where(s => s.CashierId == cashierId &&
                         s.Status == SaleStatus.Completed &&
                         !s.IsDeleted)
             .OrderBy(s => s.SaleDate)
+            .ThenBy(s => s.CreatedAt)
             .ToListAsync(cancellationToken);
 
-        if (salesToShift.Count == 0)
+        if (allSales.Count <= 1)
         {
-            return new SalesShiftResult(false, 0, 0, "No completed sales found to shift.");
+            return new SalesShiftResult(false, 0, 0, "No previous completed sales to shift (preserving latest transaction).");
         }
+
+        // Leave the very last transaction in the Normal database as active/visible
+        var salesToShift = allSales.Take(allSales.Count - 1).ToList();
+        var lastSaleKept = allSales.Last();
 
         var totalAmount = salesToShift.Sum(s => s.TotalAmount);
         var saleNumbers = salesToShift.Select(s => s.SaleNumber).ToList();
         var saleIds = salesToShift.Select(s => s.Id).ToList();
+
+        _logger.LogInformation(
+            "Shifting {Count} previous sales (totaling Rs. {Amount:N2}) to Admin DB, keeping latest sale {LastSaleNumber} (Rs. {LastAmount:N2}) in Normal DB.",
+            salesToShift.Count, totalAmount, lastSaleKept.SaleNumber, lastSaleKept.TotalAmount);
 
         var stockMovements = await _normalDb.StockMovements
             .Where(sm => sm.Reference != null && saleNumbers.Contains(sm.Reference))
@@ -292,14 +309,14 @@ public class SalesShiftService : ISalesShiftService
         await _normalDb.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
-            "Successfully shifted {Count} sales (totaling Rs. {Amount:N2}) from Normal DB to Admin DB for Cashier {CashierId}.",
-            salesToShift.Count, totalAmount, cashierId);
+            "Successfully shifted {Count} sales (totaling Rs. {Amount:N2}) from Normal DB to Admin DB for Cashier {CashierId}. Latest sale {LastSaleNumber} (Rs. {LastAmount:N2}) remains active in Normal DB.",
+            salesToShift.Count, totalAmount, cashierId, lastSaleKept.SaleNumber, lastSaleKept.TotalAmount);
 
         return new SalesShiftResult(
             true,
             salesToShift.Count,
             totalAmount,
-            $"Successfully transferred {salesToShift.Count} sales (Rs. {totalAmount:N2}) to Admin database and reset cashier active tally.");
+            $"Successfully transferred {salesToShift.Count} previous sales (Rs. {totalAmount:N2}) to Admin database while keeping the latest sale {lastSaleKept.SaleNumber} (Rs. {lastSaleKept.TotalAmount:N2}) active in normal database.");
     }
 
     private static async Task<string> GetNextAvailableSaleNumberAsync(ApplicationDbContext adminDb, DateTime saleDate, CancellationToken cancellationToken)
