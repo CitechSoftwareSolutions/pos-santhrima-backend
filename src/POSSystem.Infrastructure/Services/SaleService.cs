@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using POSSystem.Application.Common.Exceptions;
+using POSSystem.Application.Common.Interfaces;
 using POSSystem.Application.Common.Models;
 using POSSystem.Application.Features.Products;
 using POSSystem.Application.Features.Promotions;
@@ -14,88 +15,148 @@ namespace POSSystem.Infrastructure.Services;
 public class SaleService : ISaleService
 {
     private readonly ApplicationDbContext _db;
+    private readonly IDatabaseContextResolver _dbResolver;
+    private readonly IApplicationDbContextFactory _dbFactory;
     private readonly ISalesShiftService? _salesShiftService;
     private readonly ILogger<SaleService>? _logger;
 
     public SaleService(
         ApplicationDbContext db,
+        IDatabaseContextResolver dbResolver,
+        IApplicationDbContextFactory dbFactory,
         ISalesShiftService? salesShiftService = null,
         ILogger<SaleService>? logger = null)
     {
         _db = db;
+        _dbResolver = dbResolver;
+        _dbFactory = dbFactory;
         _salesShiftService = salesShiftService;
         _logger = logger;
     }
 
     public async Task<PagedResult<SaleListItemDto>> GetAllAsync(SaleQueryParams query)
     {
-        var sales = _db.Sales
-            .Include(s => s.Customer)
-            .Include(s => s.Terminal)
-            .AsQueryable();
-
-        if (query.DateFrom.HasValue)
+        IQueryable<Sale> ApplyFilters(IQueryable<Sale> source)
         {
-            var dateFrom = query.DateFrom.Value.AsUtc();
-            sales = sales.Where(s => s.SaleDate >= dateFrom);
+            var q = source
+                .Include(s => s.Customer)
+                .Include(s => s.Terminal)
+                .AsQueryable();
+
+            if (query.DateFrom.HasValue)
+            {
+                var dateFrom = query.DateFrom.Value.AsUtc();
+                q = q.Where(s => s.SaleDate >= dateFrom);
+            }
+
+            if (query.DateTo.HasValue)
+            {
+                var dateTo = query.DateTo.Value.AsUtc();
+                q = q.Where(s => s.SaleDate <= dateTo);
+            }
+
+            if (query.CustomerId.HasValue)
+            {
+                q = q.Where(s => s.CustomerId == query.CustomerId.Value);
+            }
+
+            if (query.CashierId.HasValue)
+            {
+                q = q.Where(s => s.CashierId == query.CashierId.Value);
+            }
+
+            if (query.TerminalId.HasValue)
+            {
+                q = q.Where(s => s.TerminalId == query.TerminalId.Value);
+            }
+
+            if (query.Status.HasValue)
+            {
+                q = q.Where(s => s.Status == query.Status.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(query.Search))
+            {
+                var term = query.Search.Trim().ToLower();
+                q = q.Where(s => s.SaleNumber.ToLower().Contains(term));
+            }
+
+            return q;
         }
 
-        if (query.DateTo.HasValue)
+        if (!_dbResolver.IsAdminMode())
         {
-            var dateTo = query.DateTo.Value.AsUtc();
-            sales = sales.Where(s => s.SaleDate <= dateTo);
+            var sales = ApplyFilters(_db.Sales);
+            var totalCount = await sales.CountAsync();
+
+            var cashierIds = await sales
+                .OrderByDescending(s => s.SaleDate)
+                .Skip((query.Page - 1) * query.PageSize)
+                .Take(query.PageSize)
+                .Select(s => s.CashierId)
+                .ToListAsync();
+
+            var pageSales = await sales
+                .OrderByDescending(s => s.SaleDate)
+                .Skip((query.Page - 1) * query.PageSize)
+                .Take(query.PageSize)
+                .ToListAsync();
+
+            var cashierNames = await _db.Users
+                .Where(u => cashierIds.Contains(u.Id))
+                .ToDictionaryAsync(u => u.Id, u => u.FullName);
+
+            var items = pageSales.Select(s => new SaleListItemDto(
+                s.Id,
+                s.SaleNumber,
+                s.Customer?.Name,
+                cashierNames.GetValueOrDefault(s.CashierId, "Unknown"),
+                s.TerminalId,
+                s.Terminal?.Name ?? (s.Terminal != null ? $"Counter {s.Terminal.CounterNumber}" : (s.TerminalId.HasValue ? "Counter" : null)),
+                s.SaleDate,
+                s.TotalAmount,
+                s.Status,
+                s.PaymentStatus)).ToList();
+
+            return new PagedResult<SaleListItemDto>
+            {
+                Items = items,
+                TotalCount = totalCount,
+                Page = query.Page,
+                PageSize = query.PageSize,
+            };
         }
 
-        if (query.CustomerId.HasValue)
-        {
-            sales = sales.Where(s => s.CustomerId == query.CustomerId.Value);
-        }
+        // Admin Mode (Dark Mode): Combine Normal DB and Admin DB so admin sees everything
+        using var normalDb = _dbFactory.CreateNormalDbContext();
 
-        if (query.CashierId.HasValue)
-        {
-            sales = sales.Where(s => s.CashierId == query.CashierId.Value);
-        }
+        var adminSalesList = await ApplyFilters(_db.Sales).ToListAsync();
+        var normalSalesList = await ApplyFilters(normalDb.Sales).ToListAsync();
 
-        if (query.TerminalId.HasValue)
-        {
-            sales = sales.Where(s => s.TerminalId == query.TerminalId.Value);
-        }
-
-        if (query.Status.HasValue)
-        {
-            sales = sales.Where(s => s.Status == query.Status.Value);
-        }
-
-        if (!string.IsNullOrWhiteSpace(query.Search))
-        {
-            var term = query.Search.Trim().ToLower();
-            sales = sales.Where(s => s.SaleNumber.ToLower().Contains(term));
-        }
-
-        var totalCount = await sales.CountAsync();
-
-        var cashierIds = await sales
+        var combinedSales = adminSalesList
+            .Concat(normalSalesList)
+            .DistinctBy(s => s.Id)
             .OrderByDescending(s => s.SaleDate)
+            .ToList();
+
+        var totalCombinedCount = combinedSales.Count;
+
+        var pageSalesList = combinedSales
             .Skip((query.Page - 1) * query.PageSize)
             .Take(query.PageSize)
-            .Select(s => s.CashierId)
-            .ToListAsync();
+            .ToList();
 
-        var pageSales = await sales
-            .OrderByDescending(s => s.SaleDate)
-            .Skip((query.Page - 1) * query.PageSize)
-            .Take(query.PageSize)
-            .ToListAsync();
+        var pageCashierIds = pageSalesList.Select(s => s.CashierId).Distinct().ToList();
 
-        var cashierNames = await _db.Users
-            .Where(u => cashierIds.Contains(u.Id))
+        var usersMap = await _db.Users
+            .Where(u => pageCashierIds.Contains(u.Id))
             .ToDictionaryAsync(u => u.Id, u => u.FullName);
 
-        var items = pageSales.Select(s => new SaleListItemDto(
+        var combinedItems = pageSalesList.Select(s => new SaleListItemDto(
             s.Id,
             s.SaleNumber,
             s.Customer?.Name,
-            cashierNames.GetValueOrDefault(s.CashierId, "Unknown"),
+            usersMap.GetValueOrDefault(s.CashierId, "Unknown"),
             s.TerminalId,
             s.Terminal?.Name ?? (s.Terminal != null ? $"Counter {s.Terminal.CounterNumber}" : (s.TerminalId.HasValue ? "Counter" : null)),
             s.SaleDate,
@@ -105,8 +166,8 @@ public class SaleService : ISaleService
 
         return new PagedResult<SaleListItemDto>
         {
-            Items = items,
-            TotalCount = totalCount,
+            Items = combinedItems,
+            TotalCount = totalCombinedCount,
             Page = query.Page,
             PageSize = query.PageSize,
         };
@@ -119,8 +180,23 @@ public class SaleService : ISaleService
             .Include(s => s.Terminal)
             .Include(s => s.Items)
             .Include(s => s.Payments)
-            .FirstOrDefaultAsync(s => s.Id == id)
-            ?? throw new NotFoundException(nameof(Sale), id);
+            .FirstOrDefaultAsync(s => s.Id == id);
+
+        if (sale == null && _dbResolver.IsAdminMode())
+        {
+            using var normalDb = _dbFactory.CreateNormalDbContext();
+            sale = await normalDb.Sales
+                .Include(s => s.Customer)
+                .Include(s => s.Terminal)
+                .Include(s => s.Items)
+                .Include(s => s.Payments)
+                .FirstOrDefaultAsync(s => s.Id == id);
+        }
+
+        if (sale == null)
+        {
+            throw new NotFoundException(nameof(Sale), id);
+        }
 
         return await ToDtoAsync(sale);
     }
@@ -394,85 +470,109 @@ public class SaleService : ISaleService
     {
         var sale = await _db.Sales
             .Include(s => s.Items)
-            .FirstOrDefaultAsync(s => s.Id == id)
-            ?? throw new NotFoundException(nameof(Sale), id);
+            .FirstOrDefaultAsync(s => s.Id == id);
 
-        if (sale.Status is SaleStatus.Cancelled or SaleStatus.Refunded)
+        ApplicationDbContext targetDb = _db;
+        ApplicationDbContext? normalDb = null;
+
+        if (sale == null && _dbResolver.IsAdminMode())
         {
-            throw new BusinessRuleException($"Sale is already {sale.Status}.");
+            normalDb = _dbFactory.CreateNormalDbContext();
+            targetDb = normalDb;
+            sale = await targetDb.Sales
+                .Include(s => s.Items)
+                .FirstOrDefaultAsync(s => s.Id == id);
         }
 
-        await using var transaction = await _db.Database.BeginTransactionAsync();
-
-        foreach (var item in sale.Items)
+        if (sale == null)
         {
-            var product = await _db.Products.FirstOrDefaultAsync(p => p.Id == item.ProductId);
-            if (product is not null)
+            normalDb?.Dispose();
+            throw new NotFoundException(nameof(Sale), id);
+        }
+
+        try
+        {
+            if (sale.Status is SaleStatus.Cancelled or SaleStatus.Refunded)
             {
-                product.StockQuantity += item.Quantity;
-                product.UpdatedAt = DateTime.UtcNow;
-
-                _db.StockMovements.Add(new StockMovement
-                {
-                    ProductId = product.Id,
-                    Type = StockMovementType.Return,
-                    QuantityChange = item.Quantity,
-                    StockAfter = product.StockQuantity,
-                    Reference = sale.SaleNumber,
-                    Notes = $"Sale voided: {reason}",
-                });
+                throw new BusinessRuleException($"Sale is already {sale.Status}.");
             }
-        }
 
-        sale.Status = SaleStatus.Cancelled;
-        sale.Notes = string.IsNullOrWhiteSpace(sale.Notes) ? $"Voided: {reason}" : $"{sale.Notes} | Voided: {reason}";
-        sale.UpdatedAt = DateTime.UtcNow;
+            await using var transaction = await targetDb.Database.BeginTransactionAsync();
 
-        if (sale.CustomerId.HasValue)
-        {
-            var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Id == sale.CustomerId.Value);
-            if (customer is not null)
+            foreach (var item in sale.Items)
             {
-                customer.TotalPurchases = Math.Max(0, customer.TotalPurchases - sale.TotalAmount);
-
-                if (sale.LoyaltyPointsEarned > 0)
+                var product = await targetDb.Products.FirstOrDefaultAsync(p => p.Id == item.ProductId);
+                if (product is not null)
                 {
-                    _db.LoyaltyTransactions.Add(new LoyaltyTransaction
-                    {
-                        CustomerId = customer.Id,
-                        SaleId = sale.Id,
-                        Type = LoyaltyTransactionType.Adjustment,
-                        Points = -sale.LoyaltyPointsEarned,
-                        PointsRemaining = 0,
-                        Notes = $"Reversal of points earned on voided sale {sale.SaleNumber}"
-                    });
-                    customer.LoyaltyPoints = Math.Max(0, customer.LoyaltyPoints - sale.LoyaltyPointsEarned);
-                }
+                    product.StockQuantity += item.Quantity;
+                    product.UpdatedAt = DateTime.UtcNow;
 
-                if (sale.LoyaltyPointsRedeemed > 0)
-                {
-                    _db.LoyaltyTransactions.Add(new LoyaltyTransaction
+                    targetDb.StockMovements.Add(new StockMovement
                     {
-                        CustomerId = customer.Id,
-                        SaleId = sale.Id,
-                        Type = LoyaltyTransactionType.Earned,
-                        Points = sale.LoyaltyPointsRedeemed,
-                        PointsRemaining = sale.LoyaltyPointsRedeemed,
-                        ExpiresAt = DateTime.UtcNow.AddMonths(3),
-                        Notes = $"Restoration of points redeemed on voided sale {sale.SaleNumber}"
+                        ProductId = product.Id,
+                        Type = StockMovementType.Return,
+                        QuantityChange = item.Quantity,
+                        StockAfter = product.StockQuantity,
+                        Reference = sale.SaleNumber,
+                        Notes = $"Sale voided: {reason}",
                     });
-                    customer.LoyaltyPointsRedeemed = Math.Max(0, customer.LoyaltyPointsRedeemed - sale.LoyaltyPointsRedeemed);
-                    customer.LoyaltyPoints += sale.LoyaltyPointsRedeemed;
                 }
-
-                customer.UpdatedAt = DateTime.UtcNow;
             }
+
+            sale.Status = SaleStatus.Cancelled;
+            sale.Notes = string.IsNullOrWhiteSpace(sale.Notes) ? $"Voided: {reason}" : $"{sale.Notes} | Voided: {reason}";
+            sale.UpdatedAt = DateTime.UtcNow;
+
+            if (sale.CustomerId.HasValue)
+            {
+                var customer = await targetDb.Customers.FirstOrDefaultAsync(c => c.Id == sale.CustomerId.Value);
+                if (customer is not null)
+                {
+                    customer.TotalPurchases = Math.Max(0, customer.TotalPurchases - sale.TotalAmount);
+
+                    if (sale.LoyaltyPointsEarned > 0)
+                    {
+                        targetDb.LoyaltyTransactions.Add(new LoyaltyTransaction
+                        {
+                            CustomerId = customer.Id,
+                            SaleId = sale.Id,
+                            Type = LoyaltyTransactionType.Adjustment,
+                            Points = -sale.LoyaltyPointsEarned,
+                            PointsRemaining = 0,
+                            Notes = $"Reversal of points earned on voided sale {sale.SaleNumber}"
+                        });
+                        customer.LoyaltyPoints = Math.Max(0, customer.LoyaltyPoints - sale.LoyaltyPointsEarned);
+                    }
+
+                    if (sale.LoyaltyPointsRedeemed > 0)
+                    {
+                        targetDb.LoyaltyTransactions.Add(new LoyaltyTransaction
+                        {
+                            CustomerId = customer.Id,
+                            SaleId = sale.Id,
+                            Type = LoyaltyTransactionType.Earned,
+                            Points = sale.LoyaltyPointsRedeemed,
+                            PointsRemaining = sale.LoyaltyPointsRedeemed,
+                            ExpiresAt = DateTime.UtcNow.AddMonths(3),
+                            Notes = $"Restoration of points redeemed on voided sale {sale.SaleNumber}"
+                        });
+                        customer.LoyaltyPointsRedeemed = Math.Max(0, customer.LoyaltyPointsRedeemed - sale.LoyaltyPointsRedeemed);
+                        customer.LoyaltyPoints += sale.LoyaltyPointsRedeemed;
+                    }
+
+                    customer.UpdatedAt = DateTime.UtcNow;
+                }
+            }
+
+            await targetDb.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            return await GetByIdAsync(id);
         }
-
-        await _db.SaveChangesAsync();
-        await transaction.CommitAsync();
-
-        return await GetByIdAsync(id);
+        finally
+        {
+            normalDb?.Dispose();
+        }
     }
 
     public async Task<SaleDto> RefundAsync(Guid id, List<Guid>? saleItemIds, string reason)
@@ -480,66 +580,91 @@ public class SaleService : ISaleService
         var sale = await _db.Sales
             .Include(s => s.Items)
             .Include(s => s.Payments)
-            .FirstOrDefaultAsync(s => s.Id == id)
-            ?? throw new NotFoundException(nameof(Sale), id);
+            .FirstOrDefaultAsync(s => s.Id == id);
 
-        if (sale.Status is SaleStatus.Cancelled or SaleStatus.Refunded)
+        ApplicationDbContext targetDb = _db;
+        ApplicationDbContext? normalDb = null;
+
+        if (sale == null && _dbResolver.IsAdminMode())
         {
-            throw new BusinessRuleException($"Sale is already {sale.Status}.");
+            normalDb = _dbFactory.CreateNormalDbContext();
+            targetDb = normalDb;
+            sale = await targetDb.Sales
+                .Include(s => s.Items)
+                .Include(s => s.Payments)
+                .FirstOrDefaultAsync(s => s.Id == id);
         }
 
-        var itemsToRefund = saleItemIds is { Count: > 0 }
-            ? sale.Items.Where(i => saleItemIds.Contains(i.Id)).ToList()
-            : sale.Items.ToList();
-
-        if (itemsToRefund.Count == 0)
+        if (sale == null)
         {
-            throw new ValidationAppException("No matching sale items found to refund.");
+            normalDb?.Dispose();
+            throw new NotFoundException(nameof(Sale), id);
         }
 
-        await using var transaction = await _db.Database.BeginTransactionAsync();
-
-        decimal refundAmount = 0;
-
-        foreach (var item in itemsToRefund)
+        try
         {
-            var product = await _db.Products.FirstOrDefaultAsync(p => p.Id == item.ProductId);
-            if (product is not null)
+            if (sale.Status is SaleStatus.Cancelled or SaleStatus.Refunded)
             {
-                product.StockQuantity += item.Quantity;
-                product.UpdatedAt = DateTime.UtcNow;
-
-                _db.StockMovements.Add(new StockMovement
-                {
-                    ProductId = product.Id,
-                    Type = StockMovementType.Return,
-                    QuantityChange = item.Quantity,
-                    StockAfter = product.StockQuantity,
-                    Reference = sale.SaleNumber,
-                    Notes = $"Refund: {reason}",
-                });
+                throw new BusinessRuleException($"Sale is already {sale.Status}.");
             }
 
-            refundAmount += item.LineTotal;
+            var itemsToRefund = saleItemIds is { Count: > 0 }
+                ? sale.Items.Where(i => saleItemIds.Contains(i.Id)).ToList()
+                : sale.Items.ToList();
+
+            if (itemsToRefund.Count == 0)
+            {
+                throw new ValidationAppException("No matching sale items found to refund.");
+            }
+
+            await using var transaction = await targetDb.Database.BeginTransactionAsync();
+
+            decimal refundAmount = 0;
+
+            foreach (var item in itemsToRefund)
+            {
+                var product = await targetDb.Products.FirstOrDefaultAsync(p => p.Id == item.ProductId);
+                if (product is not null)
+                {
+                    product.StockQuantity += item.Quantity;
+                    product.UpdatedAt = DateTime.UtcNow;
+
+                    targetDb.StockMovements.Add(new StockMovement
+                    {
+                        ProductId = product.Id,
+                        Type = StockMovementType.Return,
+                        QuantityChange = item.Quantity,
+                        StockAfter = product.StockQuantity,
+                        Reference = sale.SaleNumber,
+                        Notes = $"Refund: {reason}",
+                    });
+                }
+
+                refundAmount += item.LineTotal;
+            }
+
+            sale.Payments.Add(new Payment
+            {
+                Amount = -refundAmount,
+                Method = PaymentMethod.Other,
+                ReferenceNumber = $"REFUND-{DateTime.UtcNow:yyyyMMddHHmmss}",
+            });
+
+            var isFullRefund = itemsToRefund.Count == sale.Items.Count;
+            sale.Status = isFullRefund ? SaleStatus.Refunded : SaleStatus.PartiallyRefunded;
+            sale.PaymentStatus = PaymentStatus.Refunded;
+            sale.Notes = string.IsNullOrWhiteSpace(sale.Notes) ? $"Refunded: {reason}" : $"{sale.Notes} | Refunded: {reason}";
+            sale.UpdatedAt = DateTime.UtcNow;
+
+            await targetDb.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            return await GetByIdAsync(id);
         }
-
-        sale.Payments.Add(new Payment
+        finally
         {
-            Amount = -refundAmount,
-            Method = PaymentMethod.Other,
-            ReferenceNumber = $"REFUND-{DateTime.UtcNow:yyyyMMddHHmmss}",
-        });
-
-        var isFullRefund = itemsToRefund.Count == sale.Items.Count;
-        sale.Status = isFullRefund ? SaleStatus.Refunded : SaleStatus.PartiallyRefunded;
-        sale.PaymentStatus = PaymentStatus.Refunded;
-        sale.Notes = string.IsNullOrWhiteSpace(sale.Notes) ? $"Refunded: {reason}" : $"{sale.Notes} | Refunded: {reason}";
-        sale.UpdatedAt = DateTime.UtcNow;
-
-        await _db.SaveChangesAsync();
-        await transaction.CommitAsync();
-
-        return await GetByIdAsync(id);
+            normalDb?.Dispose();
+        }
     }
 
     private async Task<string> GenerateSaleNumberAsync()
