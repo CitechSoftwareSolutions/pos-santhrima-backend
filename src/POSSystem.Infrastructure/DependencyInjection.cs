@@ -25,12 +25,18 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
-        var connectionString = configuration.GetConnectionString("DefaultConnection")
-            ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
+        services.AddHttpContextAccessor();
+        services.AddScoped<IDatabaseContextResolver, DatabaseContextResolver>();
+        services.AddScoped<IApplicationDbContextFactory, ApplicationDbContextFactory>();
+        services.AddScoped<ISalesShiftService, SalesShiftService>();
 
-        services.AddDbContext<ApplicationDbContext>(options =>
-            options.UseNpgsql(connectionString)
-                   .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
+        services.AddDbContext<ApplicationDbContext>((sp, options) =>
+        {
+            var resolver = sp.GetRequiredService<IDatabaseContextResolver>();
+            var connStr = resolver.GetActiveConnectionString();
+            options.UseNpgsql(connStr)
+                   .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
+        }, ServiceLifetime.Scoped, ServiceLifetime.Scoped);
 
         services.Configure<JwtSettings>(configuration.GetSection(JwtSettings.SectionName));
 
@@ -44,7 +50,6 @@ public static class DependencyInjection
             .AddEntityFrameworkStores<ApplicationDbContext>()
             .AddDefaultTokenProviders();
 
-        services.AddHttpContextAccessor();
         services.AddHttpClient();
 
         services.AddScoped<ITokenService, TokenService>();

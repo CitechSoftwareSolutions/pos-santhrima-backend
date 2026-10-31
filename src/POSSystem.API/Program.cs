@@ -128,9 +128,59 @@ app.MapControllers();
 
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    await db.Database.MigrateAsync();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+    var resolver = scope.ServiceProvider.GetRequiredService<POSSystem.Application.Common.Interfaces.IDatabaseContextResolver>();
+    var dbFactory = scope.ServiceProvider.GetRequiredService<IApplicationDbContextFactory>();
+
+    // 1. Normal Database Setup
+    var normalConn = resolver.GetNormalConnectionString();
+    await EnsureDatabaseExistsAsync(normalConn, logger);
+    using (var normalDb = dbFactory.CreateNormalDbContext())
+    {
+        await normalDb.Database.MigrateAsync();
+    }
     await DbSeeder.SeedAsync(scope.ServiceProvider);
+
+    // 2. Admin Database Setup
+    var adminConn = resolver.GetAdminConnectionString();
+    await EnsureDatabaseExistsAsync(adminConn, logger);
+    using (var adminDb = dbFactory.CreateAdminDbContext())
+    {
+        await adminDb.Database.MigrateAsync();
+        await DbSeeder.SeedIntoContextAsync(adminDb, scope.ServiceProvider);
+    }
 }
 
 app.Run();
+
+static async Task EnsureDatabaseExistsAsync(string connectionString, ILogger logger)
+{
+    try
+    {
+        var csb = new Npgsql.NpgsqlConnectionStringBuilder(connectionString);
+        var targetDb = csb.Database;
+        if (string.IsNullOrWhiteSpace(targetDb)) return;
+
+        csb.Database = "postgres";
+        await using var conn = new Npgsql.NpgsqlConnection(csb.ConnectionString);
+        await conn.OpenAsync();
+
+        await using var checkCmd = conn.CreateCommand();
+        checkCmd.CommandText = "SELECT 1 FROM pg_database WHERE datname = @dbname";
+        checkCmd.Parameters.AddWithValue("dbname", targetDb);
+        var exists = await checkCmd.ExecuteScalarAsync();
+
+        if (exists is null)
+        {
+            logger.LogInformation("Database '{TargetDb}' does not exist. Creating now...", targetDb);
+            await using var createCmd = conn.CreateCommand();
+            createCmd.CommandText = $"CREATE DATABASE \"{targetDb.Replace("\"", "\"\"")}\"";
+            await createCmd.ExecuteNonQueryAsync();
+            logger.LogInformation("Database '{TargetDb}' created successfully.", targetDb);
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Could not verify/create database via maintenance connection. Will attempt direct EF migration.");
+    }
+}

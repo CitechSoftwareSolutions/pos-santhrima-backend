@@ -14,7 +14,9 @@ public record StoreSettingsDto(
     string ReceiptHeader,
     string ReceiptFooter,
     string DefaultPaperWidth,
-    string? HotkeyBindingsJson);
+    string? HotkeyBindingsJson,
+    decimal CashierSalesShiftThreshold = 60000m,
+    bool CashierSalesShiftEnabled = true);
 
 public record UpdateStoreSettingsRequest(
     bool LoyaltyPointsEnabled,
@@ -29,7 +31,9 @@ public record UpdateStoreSettingsRequest(
     string ReceiptHeader,
     string ReceiptFooter,
     string DefaultPaperWidth,
-    string? HotkeyBindingsJson);
+    string? HotkeyBindingsJson,
+    decimal CashierSalesShiftThreshold = 60000m,
+    bool CashierSalesShiftEnabled = true);
 
 public interface ISettingsService
 {

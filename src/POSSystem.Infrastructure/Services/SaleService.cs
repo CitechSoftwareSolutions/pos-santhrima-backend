@@ -13,10 +13,12 @@ namespace POSSystem.Infrastructure.Services;
 public class SaleService : ISaleService
 {
     private readonly ApplicationDbContext _db;
+    private readonly ISalesShiftService? _salesShiftService;
 
-    public SaleService(ApplicationDbContext db)
+    public SaleService(ApplicationDbContext db, ISalesShiftService? salesShiftService = null)
     {
         _db = db;
+        _salesShiftService = salesShiftService;
     }
 
     public async Task<PagedResult<SaleListItemDto>> GetAllAsync(SaleQueryParams query)
@@ -365,7 +367,21 @@ public class SaleService : ISaleService
         await _db.SaveChangesAsync();
         await transaction.CommitAsync();
 
-        return await GetByIdAsync(sale.Id);
+        var resultDto = await GetByIdAsync(sale.Id);
+
+        if (_salesShiftService != null)
+        {
+            try
+            {
+                await _salesShiftService.CheckAndShiftCashierSalesAsync(cashierId);
+            }
+            catch
+            {
+                // Background shifting should not fail the completed checkout
+            }
+        }
+
+        return resultDto;
     }
 
     public async Task<SaleDto> VoidAsync(Guid id, string reason)

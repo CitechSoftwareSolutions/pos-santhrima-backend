@@ -20,4 +20,8 @@ public class StoreSetting : BaseEntity
     public string ReceiptFooter { get; set; } = "Thank you for shopping with us!\nExchange possible within 7 days with bill.";
     public string DefaultPaperWidth { get; set; } = "80mm"; // 80mm or 58mm
     public string? HotkeyBindingsJson { get; set; }
+
+    // Cashier Sales Shifting to Admin Database
+    public decimal CashierSalesShiftThreshold { get; set; } = 60000m; // Default Rs. 60,000
+    public bool CashierSalesShiftEnabled { get; set; } = true;
 }

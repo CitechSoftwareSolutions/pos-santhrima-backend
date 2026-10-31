@@ -52,6 +52,12 @@ public class SettingsService : ISettingsService
                 await _db.Database.ExecuteSqlRawAsync(
                     @"ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""HotkeyBindingsJson"" text NULL;",
                     cancellationToken);
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""CashierSalesShiftThreshold"" numeric NOT NULL DEFAULT 60000;",
+                    cancellationToken);
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""CashierSalesShiftEnabled"" boolean NOT NULL DEFAULT true;",
+                    cancellationToken);
             }
             catch
             {
@@ -76,6 +82,8 @@ public class SettingsService : ISettingsService
                     ReceiptHeader = "Welcome to Santhrima Store\nYour trusted grocery partner",
                     ReceiptFooter = "Thank you for shopping with us!\nExchange possible within 7 days with bill.",
                     DefaultPaperWidth = "80mm",
+                    CashierSalesShiftThreshold = 60000m,
+                    CashierSalesShiftEnabled = true,
                     CreatedAt = DateTime.UtcNow
                 };
 
@@ -130,6 +138,8 @@ public class SettingsService : ISettingsService
         setting.ReceiptFooter = request.ReceiptFooter ?? string.Empty;
         setting.DefaultPaperWidth = request.DefaultPaperWidth ?? "80mm";
         setting.HotkeyBindingsJson = request.HotkeyBindingsJson;
+        setting.CashierSalesShiftThreshold = request.CashierSalesShiftThreshold > 0 ? request.CashierSalesShiftThreshold : 60000m;
+        setting.CashierSalesShiftEnabled = request.CashierSalesShiftEnabled;
         setting.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(cancellationToken);
@@ -151,5 +161,7 @@ public class SettingsService : ISettingsService
         s.ReceiptHeader,
         s.ReceiptFooter,
         s.DefaultPaperWidth,
-        s.HotkeyBindingsJson);
+        s.HotkeyBindingsJson,
+        s.CashierSalesShiftThreshold,
+        s.CashierSalesShiftEnabled);
 }
