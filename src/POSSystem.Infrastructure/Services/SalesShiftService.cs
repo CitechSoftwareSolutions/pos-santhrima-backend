@@ -104,6 +104,50 @@ public class SalesShiftService : ISalesShiftService
         return await ExecuteShiftAsync(cashierId, cancellationToken);
     }
 
+    public async Task<SalesShiftResult> ShiftAllRemainingSalesAsync(
+        Guid? terminalId = null,
+        Guid? cashierId = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (_dbResolver.IsAdminMode())
+        {
+            return new SalesShiftResult(false, 0, 0, "Current context is Admin database; shifting skipped.");
+        }
+
+        using var _ = DualDatabaseSyncInterceptor.BeginSuppression();
+
+        var query = _normalDb.Sales
+            .Include(s => s.Items)
+            .Include(s => s.Payments)
+            .Where(s => s.Status == SaleStatus.Completed && !s.IsDeleted);
+
+        if (terminalId.HasValue && terminalId.Value != Guid.Empty)
+        {
+            query = query.Where(s => s.TerminalId == terminalId.Value);
+        }
+        else if (cashierId.HasValue && cashierId.Value != Guid.Empty)
+        {
+            query = query.Where(s => s.CashierId == cashierId.Value);
+        }
+
+        var allSales = await query
+            .OrderBy(s => s.SaleDate)
+            .ThenBy(s => s.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        if (allSales.Count == 0)
+        {
+            return new SalesShiftResult(false, 0, 0, "No remaining sales to shift.");
+        }
+
+        var targetCashierId = cashierId ?? allSales.First().CashierId;
+        _logger.LogInformation(
+            "Register close: shifting all {Count} remaining transactions (Rs. {Total:N2}) to Admin DB (terminal {TerminalId}, cashier {CashierId}).",
+            allSales.Count, allSales.Sum(s => s.TotalAmount), terminalId, targetCashierId);
+
+        return await MigrateSalesToAdminAsync(allSales, targetCashierId, cancellationToken);
+    }
+
     private async Task<SalesShiftResult> ExecuteShiftAsync(Guid cashierId, CancellationToken cancellationToken)
     {
         using var _ = DualDatabaseSyncInterceptor.BeginSuppression();
@@ -127,13 +171,31 @@ public class SalesShiftService : ISalesShiftService
         var salesToShift = allSales.Take(allSales.Count - 1).ToList();
         var lastSaleKept = allSales.Last();
 
+        return await MigrateSalesToAdminAsync(salesToShift, cashierId, cancellationToken, lastSaleKept);
+    }
+
+    private async Task<SalesShiftResult> MigrateSalesToAdminAsync(
+        List<Sale> salesToShift,
+        Guid cashierId,
+        CancellationToken cancellationToken,
+        Sale? lastSaleKept = null)
+    {
         var totalAmount = salesToShift.Sum(s => s.TotalAmount);
         var saleNumbers = salesToShift.Select(s => s.SaleNumber).ToList();
         var saleIds = salesToShift.Select(s => s.Id).ToList();
 
-        _logger.LogInformation(
-            "Shifting {Count} previous sales (totaling Rs. {Amount:N2}) to Admin DB, keeping latest sale {LastSaleNumber} (Rs. {LastAmount:N2}) in Normal DB.",
-            salesToShift.Count, totalAmount, lastSaleKept.SaleNumber, lastSaleKept.TotalAmount);
+        if (lastSaleKept != null)
+        {
+            _logger.LogInformation(
+                "Shifting {Count} previous sales (totaling Rs. {Amount:N2}) to Admin DB, keeping latest sale {LastSaleNumber} (Rs. {LastAmount:N2}) in Normal DB.",
+                salesToShift.Count, totalAmount, lastSaleKept.SaleNumber, lastSaleKept.TotalAmount);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Shifting all {Count} remaining sales (totaling Rs. {Amount:N2}) to Admin DB for Cashier {CashierId}.",
+                salesToShift.Count, totalAmount, cashierId);
+        }
 
         var stockMovements = await _normalDb.StockMovements
             .Where(sm => sm.Reference != null && saleNumbers.Contains(sm.Reference))
@@ -308,15 +370,28 @@ public class SalesShiftService : ISalesShiftService
 
         await _normalDb.SaveChangesAsync(cancellationToken);
 
+        if (lastSaleKept != null)
+        {
+            _logger.LogInformation(
+                "Successfully shifted {Count} sales (totaling Rs. {Amount:N2}) from Normal DB to Admin DB for Cashier {CashierId}. Latest sale {LastSaleNumber} (Rs. {LastAmount:N2}) remains active in Normal DB.",
+                salesToShift.Count, totalAmount, cashierId, lastSaleKept.SaleNumber, lastSaleKept.TotalAmount);
+
+            return new SalesShiftResult(
+                true,
+                salesToShift.Count,
+                totalAmount,
+                $"Successfully transferred {salesToShift.Count} previous sales (Rs. {totalAmount:N2}) to Admin database while keeping the latest sale {lastSaleKept.SaleNumber} (Rs. {lastSaleKept.TotalAmount:N2}) active in normal database.");
+        }
+
         _logger.LogInformation(
-            "Successfully shifted {Count} sales (totaling Rs. {Amount:N2}) from Normal DB to Admin DB for Cashier {CashierId}. Latest sale {LastSaleNumber} (Rs. {LastAmount:N2}) remains active in Normal DB.",
-            salesToShift.Count, totalAmount, cashierId, lastSaleKept.SaleNumber, lastSaleKept.TotalAmount);
+            "Successfully shifted all {Count} remaining sales (totaling Rs. {Amount:N2}) from Normal DB to Admin DB for Cashier {CashierId}.",
+            salesToShift.Count, totalAmount, cashierId);
 
         return new SalesShiftResult(
             true,
             salesToShift.Count,
             totalAmount,
-            $"Successfully transferred {salesToShift.Count} previous sales (Rs. {totalAmount:N2}) to Admin database while keeping the latest sale {lastSaleKept.SaleNumber} (Rs. {lastSaleKept.TotalAmount:N2}) active in normal database.");
+            $"Successfully transferred all {salesToShift.Count} remaining sales (Rs. {totalAmount:N2}) to Admin database.");
     }
 
     private static async Task<string> GetNextAvailableSaleNumberAsync(ApplicationDbContext adminDb, DateTime saleDate, CancellationToken cancellationToken)

@@ -18,4 +18,10 @@ public interface ISalesShiftService
     /// Checks all cashiers with today's sales and shifts any cashier whose total >= threshold.
     /// </summary>
     Task<List<SalesShiftResult>> CheckAndShiftAllEligibleCashiersAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Shifts all remaining unshifted completed sales in the Normal database to the Admin database immediately,
+    /// even if below the threshold (e.g. at register close).
+    /// </summary>
+    Task<SalesShiftResult> ShiftAllRemainingSalesAsync(Guid? terminalId = null, Guid? cashierId = null, CancellationToken cancellationToken = default);
 }

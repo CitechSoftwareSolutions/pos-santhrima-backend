@@ -30,6 +30,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
     public DbSet<Cheque> Cheques => Set<Cheque>();
     public DbSet<ChequeNotificationRecipient> ChequeNotificationRecipients => Set<ChequeNotificationRecipient>();
     public DbSet<WhatsAppSetting> WhatsAppSettings => Set<WhatsAppSetting>();
+    public DbSet<RegisterSession> RegisterSessions => Set<RegisterSession>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -67,5 +68,6 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
         builder.Entity<Cheque>().HasQueryFilter(e => !e.IsDeleted);
         builder.Entity<ChequeNotificationRecipient>().HasQueryFilter(e => !e.IsDeleted);
         builder.Entity<WhatsAppSetting>().HasQueryFilter(e => !e.IsDeleted);
+        builder.Entity<RegisterSession>().HasQueryFilter(e => !e.IsDeleted);
     }
 }
