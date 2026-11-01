@@ -39,4 +39,6 @@ public interface ISettingsService
 {
     Task<StoreSettingsDto> GetSettingsAsync(CancellationToken cancellationToken = default);
     Task<StoreSettingsDto> UpdateSettingsAsync(UpdateStoreSettingsRequest request, CancellationToken cancellationToken = default);
+    Task<StoreSettingsDto> ToggleSalesShiftAsync(bool? enabled = null, CancellationToken cancellationToken = default);
 }
+

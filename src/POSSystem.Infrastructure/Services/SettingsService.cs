@@ -135,6 +135,30 @@ public class SettingsService : ISettingsService
         return ToDto(setting);
     }
 
+    public async Task<StoreSettingsDto> ToggleSalesShiftAsync(bool? enabled = null, CancellationToken cancellationToken = default)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+
+        var setting = await _db.StoreSettings.FirstOrDefaultAsync(cancellationToken);
+        if (setting == null)
+        {
+            setting = new StoreSetting
+            {
+                CashierSalesShiftEnabled = enabled ?? false,
+                CreatedAt = DateTime.UtcNow
+            };
+            _db.StoreSettings.Add(setting);
+        }
+        else
+        {
+            setting.CashierSalesShiftEnabled = enabled ?? !setting.CashierSalesShiftEnabled;
+            setting.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _db.SaveChangesAsync(cancellationToken);
+        return ToDto(setting);
+    }
+
     private static StoreSettingsDto ToDto(StoreSetting s) => new(
         s.Id,
         s.LoyaltyPointsEnabled,

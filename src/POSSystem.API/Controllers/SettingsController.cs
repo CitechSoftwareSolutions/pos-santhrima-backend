@@ -31,4 +31,13 @@ public class SettingsController : ApiControllerBase
         var updated = await _settingsService.UpdateSettingsAsync(request, cancellationToken);
         return Ok(updated);
     }
+
+    [HttpPost("toggle-sales-shift")]
+    public async Task<ActionResult<StoreSettingsDto>> ToggleSalesShift(
+        [FromQuery] bool? enabled,
+        CancellationToken cancellationToken)
+    {
+        var updated = await _settingsService.ToggleSalesShiftAsync(enabled, cancellationToken);
+        return Ok(updated);
+    }
 }
