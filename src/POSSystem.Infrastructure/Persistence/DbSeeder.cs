@@ -49,4 +49,59 @@ public static class DbSeeder
             }
         }
     }
+
+    public static async Task SeedIntoContextAsync(ApplicationDbContext context, IServiceProvider services)
+    {
+        var logger = services.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(DbSeeder));
+
+        foreach (var role in Roles.All)
+        {
+            var exists = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AnyAsync(
+                context.Roles, r => r.Name == role);
+            if (!exists)
+            {
+                context.Roles.Add(new IdentityRole<Guid>(role) { NormalizedName = role.ToUpperInvariant() });
+                logger.LogInformation("Created role {Role} in context", role);
+            }
+        }
+        await context.SaveChangesAsync();
+
+        const string adminEmail = "admin@possystem.local";
+        var adminExists = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AnyAsync(
+            context.Users, u => u.Email == adminEmail);
+
+        if (!adminExists)
+        {
+            var hasher = new PasswordHasher<ApplicationUser>();
+            var adminUser = new ApplicationUser
+            {
+                Id = Guid.NewGuid(),
+                UserName = adminEmail,
+                NormalizedUserName = adminEmail.ToUpperInvariant(),
+                Email = adminEmail,
+                NormalizedEmail = adminEmail.ToUpperInvariant(),
+                FullName = "System Administrator",
+                EmailConfirmed = true,
+                IsActive = true,
+                SecurityStamp = Guid.NewGuid().ToString()
+            };
+            adminUser.PasswordHash = hasher.HashPassword(adminUser, "Admin@12345");
+            context.Users.Add(adminUser);
+            await context.SaveChangesAsync();
+
+            var adminRole = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                context.Roles, r => r.Name == Roles.Admin);
+
+            if (adminRole != null)
+            {
+                context.UserRoles.Add(new IdentityUserRole<Guid>
+                {
+                    UserId = adminUser.Id,
+                    RoleId = adminRole.Id
+                });
+                await context.SaveChangesAsync();
+            }
+            logger.LogInformation("Seeded default admin user in context");
+        }
+    }
 }
