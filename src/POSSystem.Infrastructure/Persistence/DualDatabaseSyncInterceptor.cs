@@ -61,8 +61,8 @@ public sealed class DualDatabaseSyncInterceptor : SaveChangesInterceptor
 
             var entity = entry.Entity;
 
-            // Sales, SaleItems, and Payments are only kept in Normal DB until shifted to Admin DB
-            if (entity is Sale or SaleItem or Payment)
+            // Sales, SaleItems, Payments, and RegisterSessions are not synchronized via companion change-tracker
+            if (entity is Sale or SaleItem or Payment or RegisterSession)
             {
                 continue;
             }

@@ -15,6 +15,7 @@ using POSSystem.Application.Features.Settings;
 using POSSystem.Application.Features.Suppliers;
 using POSSystem.Application.Features.Terminals;
 using POSSystem.Application.Features.Cheques;
+using POSSystem.Application.Features.Registers;
 using POSSystem.Infrastructure.Identity;
 using POSSystem.Infrastructure.Persistence;
 using POSSystem.Infrastructure.Services;
@@ -68,6 +69,7 @@ public static class DependencyInjection
         services.AddScoped<IPromotionService, PromotionService>();
         services.AddScoped<ISettingsService, SettingsService>();
         services.AddScoped<ITerminalService, TerminalService>();
+        services.AddScoped<IRegisterService, RegisterService>();
 
         services.AddScoped<IWhatsAppNotificationService, WhatsAppNotificationService>();
         services.AddScoped<IChequeService, ChequeService>();
