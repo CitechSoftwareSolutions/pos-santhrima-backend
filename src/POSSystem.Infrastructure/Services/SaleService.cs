@@ -591,6 +591,47 @@ public class SaleService : ISaleService
     {
         var sale = await _db.Sales
             .Include(s => s.Items)
+            .FirstOrDefaultAsync(s => s.Id == id);
+
+        if (sale == null && _dbResolver.IsAdminMode())
+        {
+            using var normalDb = _dbFactory.CreateNormalDbContext();
+            sale = await normalDb.Sales
+                .Include(s => s.Items)
+                .FirstOrDefaultAsync(s => s.Id == id);
+        }
+
+        if (sale == null)
+        {
+            throw new NotFoundException(nameof(Sale), id);
+        }
+
+        var itemsToRefund = saleItemIds is { Count: > 0 }
+            ? sale.Items.Where(i => saleItemIds.Contains(i.Id)).ToList()
+            : sale.Items.ToList();
+
+        var returnItems = itemsToRefund
+            .Where(i => i.Quantity - i.ReturnedQuantity > 0)
+            .Select(i => new ReturnSaleItemRequest(i.Id, i.Quantity - i.ReturnedQuantity, reason))
+            .ToList();
+
+        if (returnItems.Count == 0)
+        {
+            throw new ValidationAppException("No items available to return for this sale.");
+        }
+
+        return await ProcessReturnAsync(id, new ReturnSaleRequest(returnItems, PaymentMethod.Other, reason));
+    }
+
+    public async Task<SaleDto> ProcessReturnAsync(Guid id, ReturnSaleRequest request)
+    {
+        if (request.Items == null || request.Items.Count == 0)
+        {
+            throw new ValidationAppException("Please select at least one item to return.");
+        }
+
+        var sale = await _db.Sales
+            .Include(s => s.Items)
             .Include(s => s.Payments)
             .FirstOrDefaultAsync(s => s.Id == id);
 
@@ -620,58 +661,258 @@ public class SaleService : ISaleService
                 throw new BusinessRuleException($"Sale is already {sale.Status}.");
             }
 
-            var itemsToRefund = saleItemIds is { Count: > 0 }
-                ? sale.Items.Where(i => saleItemIds.Contains(i.Id)).ToList()
-                : sale.Items.ToList();
-
-            if (itemsToRefund.Count == 0)
-            {
-                throw new ValidationAppException("No matching sale items found to refund.");
-            }
-
             await using var transaction = await targetDb.Database.BeginTransactionAsync();
 
-            decimal refundAmount = 0;
+            decimal totalRefundAmount = 0;
+            var returnNotes = new List<string>();
 
-            foreach (var item in itemsToRefund)
+            foreach (var returnReq in request.Items)
             {
-                var product = await targetDb.Products.FirstOrDefaultAsync(p => p.Id == item.ProductId);
-                if (product is not null)
+                var item = sale.Items.FirstOrDefault(i => i.Id == returnReq.SaleItemId);
+                if (item == null)
                 {
-                    product.StockQuantity += item.Quantity;
+                    throw new ValidationAppException($"Sale item with ID {returnReq.SaleItemId} not found in this sale.");
+                }
+
+                var returnable = item.Quantity - item.ReturnedQuantity;
+                if (returnReq.Quantity <= 0)
+                {
+                    continue;
+                }
+
+                if (returnReq.Quantity > returnable)
+                {
+                    throw new ValidationAppException(
+                        $"Cannot return {returnReq.Quantity} of '{item.ProductName}'. Only {returnable} piece(s) available for return.");
+                }
+
+                // Calculate item refund amount
+                decimal itemRefund;
+                var effectiveUnitRate = item.Quantity > 0 ? (item.LineTotal / item.Quantity) : 0;
+
+                if (item.ReturnedQuantity == 0 && returnReq.Quantity == item.Quantity)
+                {
+                    itemRefund = item.LineTotal;
+                }
+                else if (item.ReturnedQuantity + returnReq.Quantity == item.Quantity)
+                {
+                    // Exact remainder for final piece to avoid any floating round discrepancy
+                    var alreadyRefundedApprox = Math.Round(effectiveUnitRate * item.ReturnedQuantity, 2);
+                    itemRefund = Math.Max(0, item.LineTotal - alreadyRefundedApprox);
+                }
+                else
+                {
+                    itemRefund = Math.Round(effectiveUnitRate * returnReq.Quantity, 2);
+                }
+
+                item.ReturnedQuantity += returnReq.Quantity;
+                item.UpdatedAt = DateTime.UtcNow;
+                totalRefundAmount += itemRefund;
+
+                // Restore product stock
+                var product = await targetDb.Products.FirstOrDefaultAsync(p => p.Id == item.ProductId);
+                if (product != null)
+                {
+                    product.StockQuantity += returnReq.Quantity;
                     product.UpdatedAt = DateTime.UtcNow;
 
                     targetDb.StockMovements.Add(new StockMovement
                     {
                         ProductId = product.Id,
                         Type = StockMovementType.Return,
-                        QuantityChange = item.Quantity,
+                        QuantityChange = returnReq.Quantity,
                         StockAfter = product.StockQuantity,
                         Reference = sale.SaleNumber,
-                        Notes = $"Refund: {reason}",
+                        Notes = $"Return: {returnReq.Quantity}x {item.ProductName} ({request.Reason ?? "Customer Return"})",
                     });
                 }
 
-                refundAmount += item.LineTotal;
+                returnNotes.Add($"{returnReq.Quantity}x {item.ProductName}");
             }
 
+            if (totalRefundAmount <= 0)
+            {
+                throw new ValidationAppException("Total return quantity must be greater than zero.");
+            }
+
+            // Record negative refund payment
             sale.Payments.Add(new Payment
             {
-                Amount = -refundAmount,
-                Method = PaymentMethod.Other,
-                ReferenceNumber = $"REFUND-{DateTime.UtcNow:yyyyMMddHHmmss}",
+                Amount = -totalRefundAmount,
+                Method = request.RefundPaymentMethod,
+                ReferenceNumber = $"RET-{sale.SaleNumber}-{DateTime.UtcNow:yyyyMMddHHmmss}",
+                PaymentDate = DateTime.UtcNow,
             });
 
-            var isFullRefund = itemsToRefund.Count == sale.Items.Count;
-            sale.Status = isFullRefund ? SaleStatus.Refunded : SaleStatus.PartiallyRefunded;
-            sale.PaymentStatus = PaymentStatus.Refunded;
-            sale.Notes = string.IsNullOrWhiteSpace(sale.Notes) ? $"Refunded: {reason}" : $"{sale.Notes} | Refunded: {reason}";
+            // Adjust Customer Total Purchases & Loyalty Points
+            if (sale.CustomerId.HasValue)
+            {
+                var customer = await targetDb.Customers.FirstOrDefaultAsync(c => c.Id == sale.CustomerId.Value);
+                if (customer != null)
+                {
+                    customer.TotalPurchases = Math.Max(0, customer.TotalPurchases - totalRefundAmount);
+
+                    if (sale.LoyaltyPointsEarned > 0)
+                    {
+                        var pointsToReclaim = Math.Round(totalRefundAmount * 0.001m, 2);
+                        if (pointsToReclaim > 0)
+                        {
+                            targetDb.LoyaltyTransactions.Add(new LoyaltyTransaction
+                            {
+                                CustomerId = customer.Id,
+                                SaleId = sale.Id,
+                                Type = LoyaltyTransactionType.Adjustment,
+                                Points = -pointsToReclaim,
+                                PointsRemaining = 0,
+                                Notes = $"Reversal of points on returned items for sale {sale.SaleNumber}"
+                            });
+                            customer.LoyaltyPoints = Math.Max(0, customer.LoyaltyPoints - pointsToReclaim);
+                        }
+                    }
+
+                    customer.UpdatedAt = DateTime.UtcNow;
+                }
+            }
+
+            // Update status
+            var allItemsFullyReturned = sale.Items.All(i => i.ReturnedQuantity >= i.Quantity);
+            sale.Status = allItemsFullyReturned ? SaleStatus.Refunded : SaleStatus.PartiallyRefunded;
+            if (allItemsFullyReturned)
+            {
+                sale.PaymentStatus = PaymentStatus.Refunded;
+            }
+
+            var reasonSummary = string.IsNullOrWhiteSpace(request.Reason) ? "" : $" Reason: {request.Reason}.";
+            var appendNote = $"Return: {string.Join(", ", returnNotes)} refunded Rs. {totalRefundAmount:N2} via {request.RefundPaymentMethod}.{reasonSummary}";
+            sale.Notes = string.IsNullOrWhiteSpace(sale.Notes) ? appendNote : $"{sale.Notes} | {appendNote}";
             sale.UpdatedAt = DateTime.UtcNow;
 
             await targetDb.SaveChangesAsync();
             await transaction.CommitAsync();
 
             return await GetByIdAsync(id);
+        }
+        finally
+        {
+            normalDb?.Dispose();
+        }
+    }
+
+    public async Task DeleteAsync(Guid id)
+    {
+        var sale = await _db.Sales
+            .Include(s => s.Items)
+            .Include(s => s.Payments)
+            .FirstOrDefaultAsync(s => s.Id == id);
+
+        ApplicationDbContext targetDb = _db;
+        ApplicationDbContext? normalDb = null;
+
+        if (sale == null && _dbResolver.IsAdminMode())
+        {
+            normalDb = _dbFactory.CreateNormalDbContext();
+            targetDb = normalDb;
+            sale = await targetDb.Sales
+                .Include(s => s.Items)
+                .Include(s => s.Payments)
+                .FirstOrDefaultAsync(s => s.Id == id);
+        }
+
+        if (sale == null)
+        {
+            normalDb?.Dispose();
+            throw new NotFoundException(nameof(Sale), id);
+        }
+
+        try
+        {
+            await using var transaction = await targetDb.Database.BeginTransactionAsync();
+
+            // If the sale was not already voided/cancelled, restore any remaining non-returned inventory
+            if (sale.Status != SaleStatus.Cancelled)
+            {
+                foreach (var item in sale.Items)
+                {
+                    var qtyToRestore = item.Quantity - item.ReturnedQuantity;
+                    if (qtyToRestore > 0)
+                    {
+                        var product = await targetDb.Products.FirstOrDefaultAsync(p => p.Id == item.ProductId);
+                        if (product != null)
+                        {
+                            product.StockQuantity += qtyToRestore;
+                            product.UpdatedAt = DateTime.UtcNow;
+
+                            targetDb.StockMovements.Add(new StockMovement
+                            {
+                                ProductId = product.Id,
+                                Type = StockMovementType.Adjustment,
+                                QuantityChange = qtyToRestore,
+                                StockAfter = product.StockQuantity,
+                                Reference = sale.SaleNumber,
+                                Notes = $"Sale record deleted: {sale.SaleNumber}",
+                            });
+                        }
+                    }
+                }
+
+                // Adjust customer purchases & loyalty points
+                if (sale.CustomerId.HasValue)
+                {
+                    var customer = await targetDb.Customers.FirstOrDefaultAsync(c => c.Id == sale.CustomerId.Value);
+                    if (customer != null)
+                    {
+                        var totalRefundsAlreadyGiven = sale.Payments.Where(p => p.Amount < 0).Sum(p => -p.Amount);
+                        var netCustomerPurchases = Math.Max(0, sale.TotalAmount - totalRefundsAlreadyGiven);
+                        customer.TotalPurchases = Math.Max(0, customer.TotalPurchases - netCustomerPurchases);
+
+                        if (sale.LoyaltyPointsEarned > 0)
+                        {
+                            customer.LoyaltyPoints = Math.Max(0, customer.LoyaltyPoints - sale.LoyaltyPointsEarned);
+                            targetDb.LoyaltyTransactions.Add(new LoyaltyTransaction
+                            {
+                                CustomerId = customer.Id,
+                                SaleId = sale.Id,
+                                Type = LoyaltyTransactionType.Adjustment,
+                                Points = -sale.LoyaltyPointsEarned,
+                                PointsRemaining = 0,
+                                Notes = $"Reversal of points earned on deleted sale {sale.SaleNumber}"
+                            });
+                        }
+
+                        if (sale.LoyaltyPointsRedeemed > 0)
+                        {
+                            customer.LoyaltyPointsRedeemed = Math.Max(0, customer.LoyaltyPointsRedeemed - sale.LoyaltyPointsRedeemed);
+                            customer.LoyaltyPoints += sale.LoyaltyPointsRedeemed;
+                            targetDb.LoyaltyTransactions.Add(new LoyaltyTransaction
+                            {
+                                CustomerId = customer.Id,
+                                SaleId = sale.Id,
+                                Type = LoyaltyTransactionType.Earned,
+                                Points = sale.LoyaltyPointsRedeemed,
+                                PointsRemaining = sale.LoyaltyPointsRedeemed,
+                                ExpiresAt = DateTime.UtcNow.AddMonths(3),
+                                Notes = $"Restoration of points redeemed on deleted sale {sale.SaleNumber}"
+                            });
+                        }
+
+                        customer.UpdatedAt = DateTime.UtcNow;
+                    }
+                }
+            }
+
+            // Soft-delete the sale and items
+            sale.IsDeleted = true;
+            sale.Status = SaleStatus.Cancelled;
+            sale.UpdatedAt = DateTime.UtcNow;
+
+            foreach (var item in sale.Items)
+            {
+                item.IsDeleted = true;
+                item.UpdatedAt = DateTime.UtcNow;
+            }
+
+            await targetDb.SaveChangesAsync();
+            await transaction.CommitAsync();
         }
         finally
         {
@@ -744,7 +985,7 @@ public class SaleService : ISaleService
             sale.Notes,
             sale.Items.Select(i => new SaleItemDto(
                 i.Id, i.ProductId, i.ProductName, i.Quantity, i.UnitPrice, i.DiscountAmount, i.TaxAmount, i.LineTotal,
-                i.PromotionId, i.PromotionName, i.PromotionDiscountAmount)).ToList(),
+                i.PromotionId, i.PromotionName, i.PromotionDiscountAmount, i.ReturnedQuantity)).ToList(),
             sale.Payments.Select(p => new SalePaymentDto(p.Id, p.Method, p.Amount, p.ReferenceNumber, p.PaymentDate)).ToList());
     }
 }

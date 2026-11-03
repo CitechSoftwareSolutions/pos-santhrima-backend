@@ -240,8 +240,9 @@ static async Task EnsureStoreSettingsColumnsAsync(ApplicationDbContext db, ILogg
             ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""CashierSalesShiftThreshold"" numeric NOT NULL DEFAULT 60000;
             ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""CashierSalesShiftEnabled"" boolean NOT NULL DEFAULT true;
             ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""HotkeyBindingsJson"" text NULL;
+            ALTER TABLE ""SaleItems"" ADD COLUMN IF NOT EXISTS ""ReturnedQuantity"" numeric NOT NULL DEFAULT 0;
         ");
-        logger.LogInformation("Verified StoreSettings schema columns for active context.");
+        logger.LogInformation("Verified schema columns for active context.");
     }
     catch (Exception ex)
     {

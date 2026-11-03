@@ -48,6 +48,21 @@ public class SalesController : ApiControllerBase
     {
         return Ok(await _saleService.RefundAsync(id, request.SaleItemIds, request.Reason));
     }
+
+    [HttpPost("{id:guid}/returns")]
+    [Authorize(Roles = $"{Roles.Admin},{Roles.Manager},{Roles.Cashier}")]
+    public async Task<ActionResult<SaleDto>> ProcessReturn(Guid id, [FromBody] ReturnSaleRequest request)
+    {
+        return Ok(await _saleService.ProcessReturnAsync(id, request));
+    }
+
+    [HttpDelete("{id:guid}")]
+    [Authorize(Roles = $"{Roles.Admin},{Roles.Manager}")]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        await _saleService.DeleteAsync(id);
+        return NoContent();
+    }
 }
 
 public record RefundRequest(List<Guid>? SaleItemIds, string Reason);
