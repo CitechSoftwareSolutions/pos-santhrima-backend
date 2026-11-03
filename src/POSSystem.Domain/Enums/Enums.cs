@@ -63,6 +63,7 @@ public static class Roles
     public const string Admin = "Admin";
     public const string Manager = "Manager";
     public const string Cashier = "Cashier";
+    public const string SuperSuperAdmin = "SuperSuperAdmin";
 
-    public static readonly string[] All = { Admin, Manager, Cashier };
+    public static readonly string[] All = { Admin, Manager, Cashier, SuperSuperAdmin };
 }

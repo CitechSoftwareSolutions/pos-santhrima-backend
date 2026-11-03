@@ -5,7 +5,7 @@ using POSSystem.Domain.Enums;
 
 namespace POSSystem.API.Controllers;
 
-[Authorize(Roles = $"{Roles.Admin},{Roles.Manager}")]
+[Authorize(Roles = $"{Roles.Admin},{Roles.Manager},{Roles.SuperSuperAdmin}")]
 public class ReportsController : ApiControllerBase
 {
     private readonly IReportService _reportService;

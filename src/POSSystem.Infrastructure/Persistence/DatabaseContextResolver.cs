@@ -75,8 +75,14 @@ public class DatabaseContextResolver : IDatabaseContextResolver
             return _explicitMode.Value;
         }
 
-        // All user roles (Admin, Manager, Cashier) access Normal DB only.
-        // Direct HTTP requests cannot switch context to Admin DB.
+        // Only SuperSuperAdmin routes to Admin DB.
+        var user = _httpContextAccessor.HttpContext?.User;
+        if (user != null && user.IsInRole(POSSystem.Domain.Enums.Roles.SuperSuperAdmin))
+        {
+            return true;
+        }
+
+        // All other user roles (Admin, Manager, Cashier) access Normal DB only.
         return false;
     }
 
