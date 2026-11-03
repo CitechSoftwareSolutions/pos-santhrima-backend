@@ -100,7 +100,7 @@ public class SaleService : ISaleService
 
             var sales = ApplyFilters(_db.Sales);
 
-            // If a search query is provided, search Admin DB too so shifted sales can be found!
+            // If a search query is provided (e.g. searching/scanning a specific Sale Number), search Admin DB too!
             if (!string.IsNullOrWhiteSpace(query.Search))
             {
                 try
@@ -858,6 +858,22 @@ public class SaleService : ISaleService
 
             await targetDb.SaveChangesAsync();
             await transaction.CommitAsync();
+
+            if (_salesShiftService != null && targetDb == _db)
+            {
+                var returnCashierId = sale.CashierId;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _salesShiftService.CheckAndShiftCashierSalesAsync(returnCashierId);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogWarning(ex, "Background auto sales shift failed after return for cashier {CashierId}", returnCashierId);
+                    }
+                });
+            }
 
             return await GetByIdAsync(id);
         }

@@ -252,7 +252,10 @@ public class RegisterService : IRegisterService
             openedAt = closedAt;
         }
 
-        // 1. Transfer remaining unshifted transaction data to the Admin database (even though < 60000)
+        // 1. Calculate summary strictly from remaining records in Normal DB between openedAt and closedAt
+        var summary = await CalculateSummaryAsync(terminalId, openedAt, closedAt, sessionCashierId, cancellationToken);
+
+        // 2. Once the summary is taken, entirely transfer all remaining records (sales, returns, payments, stock movements) to Admin DB
         try
         {
             var shiftResult = await _salesShiftService.ShiftAllRemainingSalesAsync(terminalId, sessionCashierId, cancellationToken);
@@ -262,9 +265,6 @@ public class RegisterService : IRegisterService
         {
             _logger.LogWarning(ex, "Failed to shift remaining sales to Admin DB on register close.");
         }
-
-        // 2. Calculate summary across both Normal and Admin databases strictly between openedAt and closedAt for this counter & cashier
-        var summary = await CalculateSummaryAsync(terminalId, openedAt, closedAt, sessionCashierId, cancellationToken);
 
         return summary;
     }
@@ -345,7 +345,7 @@ public class RegisterService : IRegisterService
                             s.SaleDate <= dateTo &&
                             s.Status != SaleStatus.Cancelled);
 
-        // 1. Query Normal DB
+        // 1. Query Normal DB strictly (Admin DB is not queried for counter summary)
         try
         {
             using var normalDb = _dbFactory.CreateNormalDbContext();
@@ -363,32 +363,14 @@ public class RegisterService : IRegisterService
             _logger.LogWarning(ex, "Failed to query sales from Normal DB in RegisterService.");
         }
 
-        // 2. Query Admin DB (capturing transactions already shifted to Admin DB)
-        try
-        {
-            using var adminDb = _dbFactory.CreateAdminDbContext();
-            var adminSales = await CreateSaleQuery(adminDb).ToListAsync(cancellationToken);
-            foreach (var s in adminSales)
-            {
-                if (seenSaleIds.Add(s.Id))
-                {
-                    sales.Add(s);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to query sales from Admin DB in RegisterService.");
-        }
-
         var totalSalesCount = sales.Count;
         var subTotal = sales.Sum(s => s.SubTotal);
         var totalDiscount = sales.Sum(s => s.DiscountAmount);
         var totalTax = sales.Sum(s => s.TaxAmount);
-        var totalRevenue = sales.Sum(s => s.TotalAmount);
+        var totalRevenue = sales.Sum(s => s.TotalAmount - s.RefundedAmount);
 
-        // Aggregate payments by every payment method
-        var allPayments = sales.SelectMany(s => s.Payments).Where(p => !p.IsDeleted && p.Amount > 0).ToList();
+        // Aggregate payments by every payment method (accounting for positive payments and refunds)
+        var allPayments = sales.SelectMany(s => s.Payments).Where(p => !p.IsDeleted).ToList();
 
         var paymentMethodBreakdowns = new List<PaymentMethodSummaryDto>();
         var methods = new[]
@@ -417,7 +399,7 @@ public class RegisterService : IRegisterService
                 m.ToString(),
                 (int)m,
                 totalForMethod,
-                matching.Count
+                matching.Count(p => p.Amount > 0)
             ));
         }
 
