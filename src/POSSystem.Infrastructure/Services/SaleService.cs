@@ -275,7 +275,7 @@ public class SaleService : ISaleService
             }
 
             var unitPrice = itemRequest.UnitPrice
-                ?? PriceTierResolver.ResolveUnitPrice(product.RetailPrice, product.PriceTiers, itemRequest.Quantity);
+                ?? PriceTierResolver.ResolveUnitPrice(product.Mrp ?? product.RetailPrice, product.PriceTiers, itemRequest.Quantity);
 
             var activePromotion = PromotionCalculator.GetActivePromotion(product.Promotions);
             var promotionDiscount = activePromotion is null
