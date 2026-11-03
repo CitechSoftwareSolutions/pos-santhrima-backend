@@ -75,29 +75,8 @@ public class DatabaseContextResolver : IDatabaseContextResolver
             return _explicitMode.Value;
         }
 
-        var httpContext = _httpContextAccessor.HttpContext;
-        if (httpContext == null)
-        {
-            return false;
-        }
-
-        // 1. Check Header 'X-Database-Context' (e.g. "admin", "dark")
-        if (httpContext.Request.Headers.TryGetValue("X-Database-Context", out var headerVal))
-        {
-            var str = headerVal.ToString().Trim().ToLowerInvariant();
-            if (str is "admin" or "dark" or "true" or "1")
-            {
-                return true;
-            }
-        }
-
-        // 2. Check Query parameter ?db=admin or ?theme=dark
-        if (httpContext.Request.Query.TryGetValue("db", out var qDb) &&
-            qDb.ToString().Equals("admin", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
+        // All user roles (Admin, Manager, Cashier) access Normal DB only.
+        // Direct HTTP requests cannot switch context to Admin DB.
         return false;
     }
 

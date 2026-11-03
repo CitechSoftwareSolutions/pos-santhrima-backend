@@ -100,57 +100,7 @@ public class SaleService : ISaleService
 
             var sales = ApplyFilters(_db.Sales);
 
-            // If a search query is provided, search Admin DB too so shifted sales can be found!
-            if (!string.IsNullOrWhiteSpace(query.Search))
-            {
-                try
-                {
-                    using var adminDb = _dbFactory.CreateAdminDbContext();
-                    var matchedNormalSales = await sales.ToListAsync();
-                    var matchedAdminSales = await ApplyFilters(adminDb.Sales).ToListAsync();
-                    var combinedList = matchedNormalSales
-                        .Concat(matchedAdminSales)
-                        .DistinctBy(s => s.Id)
-                        .OrderByDescending(s => s.SaleDate)
-                        .ToList();
 
-                    var totalCombined = combinedList.Count;
-                    var pagedList = combinedList
-                        .Skip((query.Page - 1) * query.PageSize)
-                        .Take(query.PageSize)
-                        .ToList();
-
-                    var pagedCashierIds = pagedList.Select(s => s.CashierId).Distinct().ToList();
-                    var userLookup = await _db.Users
-                        .Where(u => pagedCashierIds.Contains(u.Id))
-                        .ToDictionaryAsync(u => u.Id, u => u.FullName);
-
-                    var resultItems = pagedList.Select(s => new SaleListItemDto(
-                        s.Id,
-                        s.SaleNumber,
-                        s.Customer?.Name,
-                        userLookup.GetValueOrDefault(s.CashierId, "Unknown"),
-                        s.TerminalId,
-                        s.Terminal?.Name ?? (s.Terminal != null ? $"Counter {s.Terminal.CounterNumber}" : (s.TerminalId.HasValue ? "Counter" : null)),
-                        s.SaleDate,
-                        s.TotalAmount,
-                        s.Status,
-                        s.PaymentStatus,
-                        s.RefundedAmount)).ToList();
-
-                    return new PagedResult<SaleListItemDto>
-                    {
-                        Items = resultItems,
-                        TotalCount = totalCombined,
-                        Page = query.Page,
-                        PageSize = query.PageSize,
-                    };
-                }
-                catch (Exception ex)
-                {
-                    _logger?.LogWarning(ex, "Could not query Admin DB during search in GetAllAsync.");
-                }
-            }
 
             var totalCount = await sales.CountAsync();
 
@@ -858,6 +808,22 @@ public class SaleService : ISaleService
 
             await targetDb.SaveChangesAsync();
             await transaction.CommitAsync();
+
+            if (_salesShiftService != null)
+            {
+                var returnCashierId = sale.CashierId;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _salesShiftService.CheckAndShiftCashierSalesAsync(returnCashierId);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogWarning(ex, "Background auto sales shift failed after return for cashier {CashierId}", returnCashierId);
+                    }
+                });
+            }
 
             return await GetByIdAsync(id);
         }

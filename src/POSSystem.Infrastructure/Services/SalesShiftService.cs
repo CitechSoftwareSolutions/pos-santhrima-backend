@@ -45,9 +45,9 @@ public class SalesShiftService : ISalesShiftService
         var threshold = setting?.CashierSalesShiftThreshold > 0 ? setting.CashierSalesShiftThreshold : 60000m;
 
         var eligibleCashiers = await _normalDb.Sales
-            .Where(s => s.Status == SaleStatus.Completed && !s.IsDeleted)
+            .Where(s => (s.Status == SaleStatus.Completed || s.Status == SaleStatus.Refunded || s.Status == SaleStatus.PartiallyRefunded) && !s.IsDeleted)
             .GroupBy(s => s.CashierId)
-            .Select(g => new { CashierId = g.Key, Total = g.Sum(s => s.TotalAmount), Count = g.Count() })
+            .Select(g => new { CashierId = g.Key, Total = g.Sum(s => s.TotalAmount - s.RefundedAmount), Count = g.Count() })
             .Where(x => x.Total >= threshold && x.Count > 1)
             .ToListAsync(cancellationToken);
 
@@ -79,10 +79,10 @@ public class SalesShiftService : ISalesShiftService
 
         var cashierSalesQuery = _normalDb.Sales
             .Where(s => s.CashierId == cashierId &&
-                        s.Status == SaleStatus.Completed &&
+                        (s.Status == SaleStatus.Completed || s.Status == SaleStatus.Refunded || s.Status == SaleStatus.PartiallyRefunded) &&
                         !s.IsDeleted);
 
-        var cashierUnshiftedTotal = await cashierSalesQuery.SumAsync(s => s.TotalAmount, cancellationToken);
+        var cashierUnshiftedTotal = await cashierSalesQuery.SumAsync(s => s.TotalAmount - s.RefundedAmount, cancellationToken);
         var cashierSalesCount = await cashierSalesQuery.CountAsync(cancellationToken);
 
         if (cashierUnshiftedTotal < threshold)
@@ -119,7 +119,7 @@ public class SalesShiftService : ISalesShiftService
         var query = _normalDb.Sales
             .Include(s => s.Items)
             .Include(s => s.Payments)
-            .Where(s => s.Status == SaleStatus.Completed && !s.IsDeleted);
+            .Where(s => (s.Status == SaleStatus.Completed || s.Status == SaleStatus.Refunded || s.Status == SaleStatus.PartiallyRefunded) && !s.IsDeleted);
 
         if (terminalId.HasValue && terminalId.Value != Guid.Empty)
         {
@@ -156,7 +156,7 @@ public class SalesShiftService : ISalesShiftService
             .Include(s => s.Items)
             .Include(s => s.Payments)
             .Where(s => s.CashierId == cashierId &&
-                        s.Status == SaleStatus.Completed &&
+                        (s.Status == SaleStatus.Completed || s.Status == SaleStatus.Refunded || s.Status == SaleStatus.PartiallyRefunded) &&
                         !s.IsDeleted)
             .OrderBy(s => s.SaleDate)
             .ThenBy(s => s.CreatedAt)
@@ -219,7 +219,40 @@ public class SalesShiftService : ISalesShiftService
 
             if (existingSale != null && existingSale.Id == sale.Id)
             {
-                // Already migrated with same Id
+                // Synchronize any return updates (refunded amount, status, items returned quantities, refund payments)
+                existingSale.Status = sale.Status;
+                existingSale.PaymentStatus = sale.PaymentStatus;
+                existingSale.RefundedAmount = sale.RefundedAmount;
+                existingSale.Notes = sale.Notes;
+                existingSale.UpdatedAt = DateTime.UtcNow;
+
+                foreach (var item in sale.Items)
+                {
+                    var existingItem = existingSale.Items.FirstOrDefault(i => i.Id == item.Id || (i.ProductId == item.ProductId && i.UnitPrice == item.UnitPrice));
+                    if (existingItem != null)
+                    {
+                        existingItem.ReturnedQuantity = item.ReturnedQuantity;
+                        existingItem.UpdatedAt = DateTime.UtcNow;
+                    }
+                }
+
+                foreach (var payment in sale.Payments)
+                {
+                    if (!existingSale.Payments.Any(p => p.Id == payment.Id || p.ReferenceNumber == payment.ReferenceNumber))
+                    {
+                        existingSale.Payments.Add(new Payment
+                        {
+                            Id = payment.Id,
+                            SaleId = existingSale.Id,
+                            Method = payment.Method,
+                            Amount = payment.Amount,
+                            PaymentDate = payment.PaymentDate,
+                            ReferenceNumber = payment.ReferenceNumber
+                        });
+                    }
+                }
+
+                await adminDb.SaveChangesAsync(cancellationToken);
                 saleNumberMap[sale.SaleNumber] = existingSale.SaleNumber;
                 continue;
             }
@@ -252,6 +285,7 @@ public class SalesShiftService : ISalesShiftService
                 ChangeDue = sale.ChangeDue,
                 LoyaltyPointsRedeemed = sale.LoyaltyPointsRedeemed,
                 LoyaltyPointsEarned = sale.LoyaltyPointsEarned,
+                RefundedAmount = sale.RefundedAmount,
                 Status = sale.Status,
                 PaymentStatus = sale.PaymentStatus,
                 Notes = sale.Notes,
@@ -275,7 +309,8 @@ public class SalesShiftService : ISalesShiftService
                     LineTotal = item.LineTotal,
                     PromotionId = item.PromotionId,
                     PromotionName = item.PromotionName,
-                    PromotionDiscountAmount = item.PromotionDiscountAmount
+                    PromotionDiscountAmount = item.PromotionDiscountAmount,
+                    ReturnedQuantity = item.ReturnedQuantity
                 });
             }
 
