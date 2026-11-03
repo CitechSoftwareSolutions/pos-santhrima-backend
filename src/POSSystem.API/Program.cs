@@ -241,6 +241,16 @@ static async Task EnsureStoreSettingsColumnsAsync(ApplicationDbContext db, ILogg
             ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""CashierSalesShiftEnabled"" boolean NOT NULL DEFAULT true;
             ALTER TABLE ""StoreSettings"" ADD COLUMN IF NOT EXISTS ""HotkeyBindingsJson"" text NULL;
             ALTER TABLE ""SaleItems"" ADD COLUMN IF NOT EXISTS ""ReturnedQuantity"" numeric NOT NULL DEFAULT 0;
+            ALTER TABLE ""Sales"" ADD COLUMN IF NOT EXISTS ""RefundedAmount"" numeric NOT NULL DEFAULT 0;
+            UPDATE ""Sales"" s
+            SET ""RefundedAmount"" = sub.total_refund
+            FROM (
+                SELECT ""SaleId"", COALESCE(SUM(-""Amount""), 0) AS total_refund
+                FROM ""Payments""
+                WHERE ""Amount"" < 0
+                GROUP BY ""SaleId""
+            ) sub
+            WHERE s.""Id"" = sub.""SaleId"" AND s.""RefundedAmount"" = 0;
         ");
         logger.LogInformation("Verified schema columns for active context.");
     }

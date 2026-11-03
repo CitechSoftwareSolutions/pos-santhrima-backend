@@ -94,11 +94,13 @@ public class ReportService : IReportService
 
         var sales = await GetCombinedSalesAsync(dateFrom, dateTo);
 
-        var totalSales = sales.Count;
+        // Sales that are not fully refunded count towards active transactions
+        var totalSales = sales.Count(s => s.Status != SaleStatus.Refunded);
         var grossRevenue = sales.Sum(s => s.SubTotal);
         var totalDiscount = sales.Sum(s => s.DiscountAmount);
         var totalTax = sales.Sum(s => s.TaxAmount);
-        var netRevenue = sales.Sum(s => s.TotalAmount);
+        // Net Revenue: Gross total minus all customer refunds
+        var netRevenue = sales.Sum(s => Math.Max(0, s.TotalAmount - s.RefundedAmount));
         var averageSaleValue = totalSales == 0 ? 0 : netRevenue / totalSales;
 
         return new SalesSummaryDto(dateFrom, dateTo, totalSales, grossRevenue, totalDiscount, totalTax, netRevenue, averageSaleValue);
@@ -110,7 +112,10 @@ public class ReportService : IReportService
 
         return sales
             .GroupBy(s => DateOnly.FromDateTime(s.SaleDate))
-            .Select(g => new DailySalesDto(g.Key, g.Count(), g.Sum(s => s.TotalAmount)))
+            .Select(g => new DailySalesDto(
+                g.Key,
+                g.Count(s => s.Status != SaleStatus.Refunded),
+                g.Sum(s => Math.Max(0, s.TotalAmount - s.RefundedAmount))))
             .OrderBy(d => d.Date)
             .ToList();
     }
@@ -121,8 +126,20 @@ public class ReportService : IReportService
 
         return sales
             .SelectMany(s => s.Items)
-            .GroupBy(i => new { i.ProductId, i.ProductName })
-            .Select(g => new TopProductDto(g.Key.ProductId, g.Key.ProductName, g.Sum(i => i.Quantity), g.Sum(i => i.LineTotal)))
+            .Select(i =>
+            {
+                var netQty = Math.Max(0, i.Quantity - i.ReturnedQuantity);
+                var unitRate = i.Quantity > 0 ? (i.LineTotal / i.Quantity) : 0;
+                var netRevenue = Math.Round(netQty * unitRate, 2);
+                return new { i.ProductId, i.ProductName, NetQty = netQty, NetRevenue = netRevenue };
+            })
+            .Where(x => x.NetQty > 0)
+            .GroupBy(x => new { x.ProductId, x.ProductName })
+            .Select(g => new TopProductDto(
+                g.Key.ProductId,
+                g.Key.ProductName,
+                g.Sum(i => i.NetQty),
+                g.Sum(i => i.NetRevenue)))
             .OrderByDescending(t => t.QuantitySold)
             .Take(take)
             .ToList();
@@ -156,7 +173,7 @@ public class ReportService : IReportService
         IQueryable<Payment> QueryPayments(ApplicationDbContext context) =>
             context.Payments.AsNoTracking()
                 .Include(p => p.Sale)
-                .Where(p => p.Sale.SaleDate >= dateFrom && p.Sale.SaleDate <= dateTo && p.Amount > 0 && p.Sale.Status != SaleStatus.Cancelled);
+                .Where(p => p.Sale.SaleDate >= dateFrom && p.Sale.SaleDate <= dateTo && p.Sale.Status != SaleStatus.Cancelled);
 
         var payments = await QueryPayments(_db).ToListAsync();
 
@@ -184,7 +201,10 @@ public class ReportService : IReportService
 
         return payments
             .GroupBy(p => p.Method)
-            .Select(g => new PaymentMethodBreakdownDto(g.Key.ToString(), g.Sum(p => p.Amount), g.Count()))
+            .Select(g => new PaymentMethodBreakdownDto(
+                g.Key.ToString(),
+                g.Sum(p => p.Amount),
+                g.Count(p => p.Amount > 0)))
             .OrderByDescending(p => p.Amount)
             .ToList();
     }
@@ -207,8 +227,8 @@ public class ReportService : IReportService
                 var counterNames = g.Where(s => s.Terminal != null).Select(s => s.Terminal!.Name).Distinct().ToList();
                 var counterName = counterNames.Count > 0 ? string.Join(", ", counterNames) : null;
                 var counterNumber = g.Where(s => s.Terminal != null).Select(s => (int?)s.Terminal!.CounterNumber).FirstOrDefault();
-                var totalSales = g.Count();
-                var totalRevenue = g.Sum(s => s.TotalAmount);
+                var totalSales = g.Count(s => s.Status != SaleStatus.Refunded);
+                var totalRevenue = g.Sum(s => Math.Max(0, s.TotalAmount - s.RefundedAmount));
                 var avg = totalSales == 0 ? 0 : totalRevenue / totalSales;
                 var totalDiscount = g.Sum(s => s.DiscountAmount);
                 var totalTax = g.Sum(s => s.TaxAmount);
@@ -253,8 +273,8 @@ public class ReportService : IReportService
                 var counterNumber = terminal?.CounterNumber;
                 var counterName = terminal?.Name ?? (counterNumber.HasValue ? $"Counter {counterNumber}" : "Main Register");
                 var terminalCode = terminal?.TerminalCode;
-                var totalSales = g.Count();
-                var totalRevenue = g.Sum(s => s.TotalAmount);
+                var totalSales = g.Count(s => s.Status != SaleStatus.Refunded);
+                var totalRevenue = g.Sum(s => Math.Max(0, s.TotalAmount - s.RefundedAmount));
                 var avg = totalSales == 0 ? 0 : totalRevenue / totalSales;
                 var activeCashiers = g.Select(s => s.CashierId)
                     .Distinct()

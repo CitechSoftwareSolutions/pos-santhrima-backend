@@ -69,7 +69,8 @@ public record SaleDto(
     PaymentStatus PaymentStatus,
     string? Notes,
     List<SaleItemDto> Items,
-    List<SalePaymentDto> Payments);
+    List<SalePaymentDto> Payments,
+    decimal RefundedAmount = 0);
 
 public record SaleListItemDto(
     Guid Id,
@@ -81,7 +82,8 @@ public record SaleListItemDto(
     DateTime SaleDate,
     decimal TotalAmount,
     SaleStatus Status,
-    PaymentStatus PaymentStatus);
+    PaymentStatus PaymentStatus,
+    decimal RefundedAmount = 0);
 
 public record SaleQueryParams
 {

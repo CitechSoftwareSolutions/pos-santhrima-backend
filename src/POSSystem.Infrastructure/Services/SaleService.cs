@@ -128,7 +128,8 @@ public class SaleService : ISaleService
                 s.SaleDate,
                 s.TotalAmount,
                 s.Status,
-                s.PaymentStatus)).ToList();
+                s.PaymentStatus,
+                s.RefundedAmount)).ToList();
 
             return new PagedResult<SaleListItemDto>
             {
@@ -174,7 +175,8 @@ public class SaleService : ISaleService
             s.SaleDate,
             s.TotalAmount,
             s.Status,
-            s.PaymentStatus)).ToList();
+            s.PaymentStatus,
+            s.RefundedAmount)).ToList();
 
         return new PagedResult<SaleListItemDto>
         {
@@ -736,13 +738,15 @@ public class SaleService : ISaleService
             }
 
             // Record negative refund payment
-            sale.Payments.Add(new Payment
+            var refundPayment = new Payment
             {
+                SaleId = sale.Id,
                 Amount = -totalRefundAmount,
                 Method = request.RefundPaymentMethod,
                 ReferenceNumber = $"RET-{sale.SaleNumber}-{DateTime.UtcNow:yyyyMMddHHmmss}",
                 PaymentDate = DateTime.UtcNow,
-            });
+            };
+            targetDb.Payments.Add(refundPayment);
 
             // Adjust Customer Total Purchases & Loyalty Points
             if (sale.CustomerId.HasValue)
@@ -774,12 +778,14 @@ public class SaleService : ISaleService
                 }
             }
 
-            // Update status
+            // Update status and refunded amount
+            sale.RefundedAmount += totalRefundAmount;
             var allItemsFullyReturned = sale.Items.All(i => i.ReturnedQuantity >= i.Quantity);
             sale.Status = allItemsFullyReturned ? SaleStatus.Refunded : SaleStatus.PartiallyRefunded;
             if (allItemsFullyReturned)
             {
                 sale.PaymentStatus = PaymentStatus.Refunded;
+                sale.RefundedAmount = sale.TotalAmount; // ensure exact match
             }
 
             var reasonSummary = string.IsNullOrWhiteSpace(request.Reason) ? "" : $" Reason: {request.Reason}.";
@@ -986,6 +992,7 @@ public class SaleService : ISaleService
             sale.Items.Select(i => new SaleItemDto(
                 i.Id, i.ProductId, i.ProductName, i.Quantity, i.UnitPrice, i.DiscountAmount, i.TaxAmount, i.LineTotal,
                 i.PromotionId, i.PromotionName, i.PromotionDiscountAmount, i.ReturnedQuantity)).ToList(),
-            sale.Payments.Select(p => new SalePaymentDto(p.Id, p.Method, p.Amount, p.ReferenceNumber, p.PaymentDate)).ToList());
+            sale.Payments.Select(p => new SalePaymentDto(p.Id, p.Method, p.Amount, p.ReferenceNumber, p.PaymentDate)).ToList(),
+            sale.RefundedAmount);
     }
 }
