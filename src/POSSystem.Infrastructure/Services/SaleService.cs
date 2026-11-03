@@ -77,7 +77,7 @@ public class SaleService : ISaleService
 
             if (!string.IsNullOrWhiteSpace(query.Search))
             {
-                var term = query.Search.Trim().ToLower();
+                var term = query.Search.Trim().Trim('*').ToLower();
                 q = q.Where(s => s.SaleNumber.ToLower().Contains(term));
             }
 
@@ -99,6 +99,59 @@ public class SaleService : ISaleService
             }
 
             var sales = ApplyFilters(_db.Sales);
+
+            // If a search query is provided, search Admin DB too so shifted sales can be found!
+            if (!string.IsNullOrWhiteSpace(query.Search))
+            {
+                try
+                {
+                    using var adminDb = _dbFactory.CreateAdminDbContext();
+                    var matchedNormalSales = await sales.ToListAsync();
+                    var matchedAdminSales = await ApplyFilters(adminDb.Sales).ToListAsync();
+                    var combinedList = matchedNormalSales
+                        .Concat(matchedAdminSales)
+                        .DistinctBy(s => s.Id)
+                        .OrderByDescending(s => s.SaleDate)
+                        .ToList();
+
+                    var totalCombined = combinedList.Count;
+                    var pagedList = combinedList
+                        .Skip((query.Page - 1) * query.PageSize)
+                        .Take(query.PageSize)
+                        .ToList();
+
+                    var pagedCashierIds = pagedList.Select(s => s.CashierId).Distinct().ToList();
+                    var userLookup = await _db.Users
+                        .Where(u => pagedCashierIds.Contains(u.Id))
+                        .ToDictionaryAsync(u => u.Id, u => u.FullName);
+
+                    var resultItems = pagedList.Select(s => new SaleListItemDto(
+                        s.Id,
+                        s.SaleNumber,
+                        s.Customer?.Name,
+                        userLookup.GetValueOrDefault(s.CashierId, "Unknown"),
+                        s.TerminalId,
+                        s.Terminal?.Name ?? (s.Terminal != null ? $"Counter {s.Terminal.CounterNumber}" : (s.TerminalId.HasValue ? "Counter" : null)),
+                        s.SaleDate,
+                        s.TotalAmount,
+                        s.Status,
+                        s.PaymentStatus,
+                        s.RefundedAmount)).ToList();
+
+                    return new PagedResult<SaleListItemDto>
+                    {
+                        Items = resultItems,
+                        TotalCount = totalCombined,
+                        Page = query.Page,
+                        PageSize = query.PageSize,
+                    };
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Could not query Admin DB during search in GetAllAsync.");
+                }
+            }
+
             var totalCount = await sales.CountAsync();
 
             var cashierIds = await sales
@@ -196,10 +249,12 @@ public class SaleService : ISaleService
             .Include(s => s.Payments)
             .FirstOrDefaultAsync(s => s.Id == id);
 
-        if (sale == null && _dbResolver.IsAdminMode())
+        if (sale == null)
         {
-            using var normalDb = _dbFactory.CreateNormalDbContext();
-            sale = await normalDb.Sales
+            using var fallbackDb = _dbResolver.IsAdminMode()
+                ? _dbFactory.CreateNormalDbContext()
+                : _dbFactory.CreateAdminDbContext();
+            sale = await fallbackDb.Sales
                 .Include(s => s.Customer)
                 .Include(s => s.Terminal)
                 .Include(s => s.Items)
@@ -638,21 +693,29 @@ public class SaleService : ISaleService
             .FirstOrDefaultAsync(s => s.Id == id);
 
         ApplicationDbContext targetDb = _db;
-        ApplicationDbContext? normalDb = null;
+        ApplicationDbContext? fallbackDb = null;
 
-        if (sale == null && _dbResolver.IsAdminMode())
+        if (sale == null)
         {
-            normalDb = _dbFactory.CreateNormalDbContext();
-            targetDb = normalDb;
-            sale = await targetDb.Sales
+            fallbackDb = _dbResolver.IsAdminMode()
+                ? _dbFactory.CreateNormalDbContext()
+                : _dbFactory.CreateAdminDbContext();
+            sale = await fallbackDb.Sales
+                .Include(s => s.Customer)
+                .Include(s => s.Terminal)
                 .Include(s => s.Items)
                 .Include(s => s.Payments)
                 .FirstOrDefaultAsync(s => s.Id == id);
+
+            if (sale != null)
+            {
+                targetDb = fallbackDb;
+            }
         }
 
         if (sale == null)
         {
-            normalDb?.Dispose();
+            fallbackDb?.Dispose();
             throw new NotFoundException(nameof(Sale), id);
         }
 
@@ -800,7 +863,7 @@ public class SaleService : ISaleService
         }
         finally
         {
-            normalDb?.Dispose();
+            fallbackDb?.Dispose();
         }
     }
 
@@ -812,21 +875,27 @@ public class SaleService : ISaleService
             .FirstOrDefaultAsync(s => s.Id == id);
 
         ApplicationDbContext targetDb = _db;
-        ApplicationDbContext? normalDb = null;
+        ApplicationDbContext? fallbackDb = null;
 
-        if (sale == null && _dbResolver.IsAdminMode())
+        if (sale == null)
         {
-            normalDb = _dbFactory.CreateNormalDbContext();
-            targetDb = normalDb;
-            sale = await targetDb.Sales
+            fallbackDb = _dbResolver.IsAdminMode()
+                ? _dbFactory.CreateNormalDbContext()
+                : _dbFactory.CreateAdminDbContext();
+            sale = await fallbackDb.Sales
                 .Include(s => s.Items)
                 .Include(s => s.Payments)
                 .FirstOrDefaultAsync(s => s.Id == id);
+
+            if (sale != null)
+            {
+                targetDb = fallbackDb;
+            }
         }
 
         if (sale == null)
         {
-            normalDb?.Dispose();
+            fallbackDb?.Dispose();
             throw new NotFoundException(nameof(Sale), id);
         }
 
@@ -922,7 +991,7 @@ public class SaleService : ISaleService
         }
         finally
         {
-            normalDb?.Dispose();
+            fallbackDb?.Dispose();
         }
     }
 
