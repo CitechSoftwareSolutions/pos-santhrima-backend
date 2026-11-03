@@ -38,7 +38,8 @@ public record ProductDto(
     bool IsLowStock,
     List<PriceTierDto> PriceTiers,
     PromotionSummaryDto? ActivePromotion,
-    string? Brand = null);
+    string? Brand = null,
+    decimal? Mrp = null);
 
 public record CreateProductRequest(
     string Sku,
@@ -57,7 +58,8 @@ public record CreateProductRequest(
     decimal ReorderLevel,
     string? ImageUrl,
     List<PriceTierRequest>? PriceTiers = null,
-    string? Brand = null);
+    string? Brand = null,
+    decimal? Mrp = null);
 
 public record UpdateProductRequest(
     string Sku,
@@ -76,7 +78,8 @@ public record UpdateProductRequest(
     string? ImageUrl,
     bool IsActive,
     List<PriceTierRequest>? PriceTiers = null,
-    string? Brand = null);
+    string? Brand = null,
+    decimal? Mrp = null);
 
 public record AdjustStockRequest(decimal QuantityChange, string? Notes);
 

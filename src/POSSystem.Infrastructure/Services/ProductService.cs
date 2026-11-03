@@ -83,11 +83,14 @@ public class ProductService : IProductService
 
     public async Task<ProductDto?> GetBySkuOrBarcodeAsync(string code)
     {
+        var cleanCode = code?.Trim() ?? string.Empty;
+        var paddedCode = cleanCode.Length <= 5 ? cleanCode.PadLeft(5, '0') : cleanCode;
+
         var product = await _db.Products
             .Include(p => p.Category)
             .Include(p => p.Promotions)
             .Include(p => p.PriceTiers)
-            .FirstOrDefaultAsync(p => p.Sku == code || p.Barcode == code);
+            .FirstOrDefaultAsync(p => p.Sku == cleanCode || p.Barcode == cleanCode || p.Sku == paddedCode || p.Barcode == paddedCode);
 
         return product is null ? null : ToDto(product);
     }
@@ -123,6 +126,7 @@ public class ProductService : IProductService
             CategoryId = request.CategoryId,
             CostPrice = request.CostPrice,
             RetailPrice = request.RetailPrice,
+            Mrp = request.Mrp ?? request.RetailPrice,
             WholesalePrice = request.WholesalePrice,
             SpecialPrice = request.SpecialPrice,
             TaxRate = request.TaxRate,
@@ -184,6 +188,7 @@ public class ProductService : IProductService
         product.CategoryId = request.CategoryId;
         product.CostPrice = request.CostPrice;
         product.RetailPrice = request.RetailPrice;
+        product.Mrp = request.Mrp ?? request.RetailPrice;
         product.WholesalePrice = request.WholesalePrice;
         product.SpecialPrice = request.SpecialPrice;
         product.TaxRate = request.TaxRate;
@@ -330,7 +335,8 @@ public class ProductService : IProductService
             .Select(t => new PriceTierDto(t.Id, t.Quantity, t.RetailPrice, t.WholesalePrice, t.SpecialPrice))
             .ToList(),
         PromotionCalculator.GetActivePromotion(p.Promotions),
-        p.Brand);
+        p.Brand,
+        p.Mrp ?? p.RetailPrice);
 
     public async Task<string> GenerateNextSkuAsync(Guid categoryId)
     {

@@ -18,6 +18,7 @@ public class Product : BaseEntity
     // quantity. RetailPrice is required; Wholesale/Special are optional overrides
     // that fall back to RetailPrice when not set.
     public decimal RetailPrice { get; set; }
+    public decimal? Mrp { get; set; }
     public decimal? WholesalePrice { get; set; }
     public decimal? SpecialPrice { get; set; }
 

@@ -20,6 +20,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 
         builder.Property(p => p.CostPrice).HasColumnType("numeric(18,2)");
         builder.Property(p => p.RetailPrice).HasColumnType("numeric(18,2)");
+        builder.Property(p => p.Mrp).HasColumnType("numeric(18,2)");
         builder.Property(p => p.WholesalePrice).HasColumnType("numeric(18,2)");
         builder.Property(p => p.SpecialPrice).HasColumnType("numeric(18,2)");
         builder.Property(p => p.TaxRate).HasColumnType("numeric(5,2)");
