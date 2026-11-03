@@ -32,7 +32,18 @@ public record SaleItemDto(
     decimal LineTotal,
     Guid? PromotionId,
     string? PromotionName,
-    decimal PromotionDiscountAmount);
+    decimal PromotionDiscountAmount,
+    decimal ReturnedQuantity = 0);
+
+public record ReturnSaleItemRequest(
+    Guid SaleItemId,
+    decimal Quantity,
+    string? Reason = null);
+
+public record ReturnSaleRequest(
+    List<ReturnSaleItemRequest> Items,
+    PaymentMethod RefundPaymentMethod = PaymentMethod.Cash,
+    string? Reason = null);
 
 public record SalePaymentDto(Guid Id, PaymentMethod Method, decimal Amount, string? ReferenceNumber, DateTime PaymentDate);
 
@@ -58,7 +69,8 @@ public record SaleDto(
     PaymentStatus PaymentStatus,
     string? Notes,
     List<SaleItemDto> Items,
-    List<SalePaymentDto> Payments);
+    List<SalePaymentDto> Payments,
+    decimal RefundedAmount = 0);
 
 public record SaleListItemDto(
     Guid Id,
@@ -70,7 +82,8 @@ public record SaleListItemDto(
     DateTime SaleDate,
     decimal TotalAmount,
     SaleStatus Status,
-    PaymentStatus PaymentStatus);
+    PaymentStatus PaymentStatus,
+    decimal RefundedAmount = 0);
 
 public record SaleQueryParams
 {
@@ -92,4 +105,6 @@ public interface ISaleService
     Task<SaleDto> CreateAsync(CreateSaleRequest request, Guid cashierId);
     Task<SaleDto> VoidAsync(Guid id, string reason);
     Task<SaleDto> RefundAsync(Guid id, List<Guid>? saleItemIds, string reason);
+    Task<SaleDto> ProcessReturnAsync(Guid id, ReturnSaleRequest request);
+    Task DeleteAsync(Guid id);
 }

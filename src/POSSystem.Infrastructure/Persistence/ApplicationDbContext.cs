@@ -57,6 +57,8 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
             .OnDelete(DeleteBehavior.SetNull);
 
         // Global query filter for soft delete
+        builder.Entity<Sale>().HasQueryFilter(e => !e.IsDeleted);
+        builder.Entity<SaleItem>().HasQueryFilter(e => !e.IsDeleted);
         builder.Entity<Category>().HasQueryFilter(e => !e.IsDeleted);
         builder.Entity<Product>().HasQueryFilter(e => !e.IsDeleted);
         builder.Entity<Customer>().HasQueryFilter(e => !e.IsDeleted);
