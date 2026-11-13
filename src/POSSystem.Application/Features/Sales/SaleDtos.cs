@@ -83,7 +83,8 @@ public record SaleListItemDto(
     decimal TotalAmount,
     SaleStatus Status,
     PaymentStatus PaymentStatus,
-    decimal RefundedAmount = 0);
+    decimal RefundedAmount = 0,
+    string? SourceDb = null);
 
 public record SaleQueryParams
 {
@@ -96,6 +97,7 @@ public record SaleQueryParams
     public Guid? TerminalId { get; set; }
     public SaleStatus? Status { get; set; }
     public string? Search { get; set; }
+    public string? SourceDb { get; set; }
 }
 
 public interface ISaleService

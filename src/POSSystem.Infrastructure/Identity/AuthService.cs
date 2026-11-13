@@ -11,17 +11,20 @@ public class AuthService : IAuthService
     private readonly RoleManager<IdentityRole<Guid>> _roleManager;
     private readonly ITokenService _tokenService;
     private readonly Persistence.IApplicationDbContextFactory _dbFactory;
+    private readonly POSSystem.Application.Common.Interfaces.IDatabaseContextResolver? _dbResolver;
 
     public AuthService(
         UserManager<ApplicationUser> userManager,
         RoleManager<IdentityRole<Guid>> roleManager,
         ITokenService tokenService,
-        Persistence.IApplicationDbContextFactory dbFactory)
+        Persistence.IApplicationDbContextFactory dbFactory,
+        POSSystem.Application.Common.Interfaces.IDatabaseContextResolver? dbResolver = null)
     {
         _userManager = userManager;
         _roleManager = roleManager;
         _tokenService = tokenService;
         _dbFactory = dbFactory;
+        _dbResolver = dbResolver;
     }
 
     public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
@@ -88,6 +91,7 @@ public class AuthService : IAuthService
     {
         var users = _userManager.Users.OrderBy(u => u.FullName).ToList();
         var result = new List<UserDto>();
+        var seenIds = new HashSet<Guid>();
 
         foreach (var user in users)
         {
@@ -96,10 +100,49 @@ public class AuthService : IAuthService
             {
                 continue; // SuperSuperAdmin cannot be seen anywhere within the system
             }
+            seenIds.Add(user.Id);
             result.Add(new UserDto(user.Id, user.FullName, user.Email!, roles, user.IsActive));
         }
 
-        return result;
+        // If in Admin Mode (SuperSuperAdmin), also merge any users from Normal DB
+        if (_dbResolver != null && _dbResolver.IsAdminMode())
+        {
+            try
+            {
+                using var normalDb = _dbFactory.CreateNormalDbContext();
+                var normalUsers = normalDb.Users.OrderBy(u => u.FullName).ToList();
+                var allRoles = normalDb.Roles.ToList();
+                var allUserRoles = normalDb.UserRoles.ToList();
+
+                var roleIdMap = allRoles.ToDictionary(r => r.Id, r => r.Name ?? string.Empty);
+                var userRolesMap = allUserRoles
+                    .GroupBy(ur => ur.UserId)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g.Select(ur => roleIdMap.GetValueOrDefault(ur.RoleId, string.Empty))
+                              .Where(r => !string.IsNullOrEmpty(r))
+                              .ToList());
+
+                foreach (var nu in normalUsers)
+                {
+                    if (seenIds.Add(nu.Id))
+                    {
+                        var roles = userRolesMap.GetValueOrDefault(nu.Id, new List<string>());
+                        if (roles.Contains(Roles.SuperSuperAdmin))
+                        {
+                            continue;
+                        }
+                        result.Add(new UserDto(nu.Id, nu.FullName, nu.Email!, roles, nu.IsActive));
+                    }
+                }
+            }
+            catch
+            {
+                // Fallback gracefully to current context users
+            }
+        }
+
+        return result.OrderBy(u => u.FullName).ToList();
     }
 
     public async Task SetUserActiveStatusAsync(Guid userId, bool isActive)

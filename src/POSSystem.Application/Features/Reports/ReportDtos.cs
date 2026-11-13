@@ -1,14 +1,18 @@
 namespace POSSystem.Application.Features.Reports;
 
 public record SalesSummaryDto(
-    DateTime DateFrom,
-    DateTime DateTo,
+    DateTime? DateFrom,
+    DateTime? DateTo,
     int TotalSales,
     decimal GrossRevenue,
     decimal TotalDiscount,
     decimal TotalTax,
     decimal NetRevenue,
-    decimal AverageSaleValue);
+    decimal AverageSaleValue,
+    int? DarkSalesCount = null,
+    decimal? DarkRevenue = null,
+    int? LightSalesCount = null,
+    decimal? LightRevenue = null);
 
 public record DailySalesDto(DateOnly Date, int SalesCount, decimal TotalAmount);
 
@@ -46,12 +50,12 @@ public record CounterSalesDto(
 
 public interface IReportService
 {
-    Task<SalesSummaryDto> GetSalesSummaryAsync(DateTime dateFrom, DateTime dateTo);
-    Task<List<DailySalesDto>> GetDailySalesAsync(DateTime dateFrom, DateTime dateTo);
-    Task<List<TopProductDto>> GetTopProductsAsync(DateTime dateFrom, DateTime dateTo, int take = 10);
+    Task<SalesSummaryDto> GetSalesSummaryAsync(DateTime? dateFrom, DateTime? dateTo);
+    Task<List<DailySalesDto>> GetDailySalesAsync(DateTime? dateFrom, DateTime? dateTo);
+    Task<List<TopProductDto>> GetTopProductsAsync(DateTime? dateFrom, DateTime? dateTo, int take = 10);
     Task<List<LowStockReportItemDto>> GetLowStockReportAsync();
     Task<InventoryValuationDto> GetInventoryValuationAsync();
-    Task<List<PaymentMethodBreakdownDto>> GetPaymentMethodBreakdownAsync(DateTime dateFrom, DateTime dateTo);
-    Task<List<CashierSalesDto>> GetCashierSalesAsync(DateTime dateFrom, DateTime dateTo);
-    Task<List<CounterSalesDto>> GetCounterSalesAsync(DateTime dateFrom, DateTime dateTo);
+    Task<List<PaymentMethodBreakdownDto>> GetPaymentMethodBreakdownAsync(DateTime? dateFrom, DateTime? dateTo);
+    Task<List<CashierSalesDto>> GetCashierSalesAsync(DateTime? dateFrom, DateTime? dateTo);
+    Task<List<CounterSalesDto>> GetCounterSalesAsync(DateTime? dateFrom, DateTime? dateTo);
 }

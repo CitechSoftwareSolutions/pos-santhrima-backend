@@ -16,19 +16,19 @@ public class ReportsController : ApiControllerBase
     }
 
     [HttpGet("sales-summary")]
-    public async Task<ActionResult<SalesSummaryDto>> GetSalesSummary([FromQuery] DateTime dateFrom, [FromQuery] DateTime dateTo)
+    public async Task<ActionResult<SalesSummaryDto>> GetSalesSummary([FromQuery] DateTime? dateFrom, [FromQuery] DateTime? dateTo)
     {
         return Ok(await _reportService.GetSalesSummaryAsync(dateFrom, dateTo));
     }
 
     [HttpGet("daily-sales")]
-    public async Task<ActionResult<List<DailySalesDto>>> GetDailySales([FromQuery] DateTime dateFrom, [FromQuery] DateTime dateTo)
+    public async Task<ActionResult<List<DailySalesDto>>> GetDailySales([FromQuery] DateTime? dateFrom, [FromQuery] DateTime? dateTo)
     {
         return Ok(await _reportService.GetDailySalesAsync(dateFrom, dateTo));
     }
 
     [HttpGet("top-products")]
-    public async Task<ActionResult<List<TopProductDto>>> GetTopProducts([FromQuery] DateTime dateFrom, [FromQuery] DateTime dateTo, [FromQuery] int take = 10)
+    public async Task<ActionResult<List<TopProductDto>>> GetTopProducts([FromQuery] DateTime? dateFrom, [FromQuery] DateTime? dateTo, [FromQuery] int take = 10)
     {
         return Ok(await _reportService.GetTopProductsAsync(dateFrom, dateTo, take));
     }
@@ -46,19 +46,19 @@ public class ReportsController : ApiControllerBase
     }
 
     [HttpGet("payment-methods")]
-    public async Task<ActionResult<List<PaymentMethodBreakdownDto>>> GetPaymentMethodBreakdown([FromQuery] DateTime dateFrom, [FromQuery] DateTime dateTo)
+    public async Task<ActionResult<List<PaymentMethodBreakdownDto>>> GetPaymentMethodBreakdown([FromQuery] DateTime? dateFrom, [FromQuery] DateTime? dateTo)
     {
         return Ok(await _reportService.GetPaymentMethodBreakdownAsync(dateFrom, dateTo));
     }
 
     [HttpGet("cashier-sales")]
-    public async Task<ActionResult<List<CashierSalesDto>>> GetCashierSales([FromQuery] DateTime dateFrom, [FromQuery] DateTime dateTo)
+    public async Task<ActionResult<List<CashierSalesDto>>> GetCashierSales([FromQuery] DateTime? dateFrom, [FromQuery] DateTime? dateTo)
     {
         return Ok(await _reportService.GetCashierSalesAsync(dateFrom, dateTo));
     }
 
     [HttpGet("counter-sales")]
-    public async Task<ActionResult<List<CounterSalesDto>>> GetCounterSales([FromQuery] DateTime dateFrom, [FromQuery] DateTime dateTo)
+    public async Task<ActionResult<List<CounterSalesDto>>> GetCounterSales([FromQuery] DateTime? dateFrom, [FromQuery] DateTime? dateTo)
     {
         return Ok(await _reportService.GetCounterSalesAsync(dateFrom, dateTo));
     }
