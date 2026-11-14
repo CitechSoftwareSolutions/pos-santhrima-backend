@@ -8,6 +8,8 @@ public record LoginRequest(string Email, string Password);
 
 public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 
+public record UpdateCredentialsRequest(string CurrentPassword, string? NewUsername, string? NewPassword);
+
 public record UserDto(Guid Id, string FullName, string Email, IList<string> Roles, bool IsActive);
 
 public record AuthResponse(string Token, DateTime ExpiresAt, UserDto User);
@@ -19,6 +21,7 @@ public interface IAuthService
     Task<List<UserDto>> GetAllUsersAsync();
     Task SetUserActiveStatusAsync(Guid userId, bool isActive);
     Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request);
+    Task ChangeSuperAdminCredentialsAsync(Guid userId, UpdateCredentialsRequest request);
     Task<UserDto> UpdateUserAsync(Guid userId, UpdateUserRequest request);
     Task DeleteUserAsync(Guid userId, Guid currentUserId);
 }

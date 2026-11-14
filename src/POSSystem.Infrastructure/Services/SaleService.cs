@@ -193,43 +193,105 @@ public class SaleService : ISaleService
             };
         }
 
-        // Admin Mode (Dark Mode): Combine Normal DB and Admin DB so admin sees everything
+        // Admin Mode (SuperSuperAdmin): Combine Normal DB (Light) and Admin DB (Dark)
+        // so SuperSuperAdmin sees both together, with database source indication.
         using var normalDb = _dbFactory.CreateNormalDbContext();
 
         var adminSalesList = await ApplyFilters(_db.Sales).ToListAsync();
         var normalSalesList = await ApplyFilters(normalDb.Sales).ToListAsync();
 
-        var combinedSales = adminSalesList
-            .Concat(normalSalesList)
-            .DistinctBy(s => s.Id)
-            .OrderByDescending(s => s.SaleDate)
+        var taggedAdminSales = adminSalesList.Select(s => (Sale: s, SourceDb: "dark"));
+        var taggedNormalSales = normalSalesList.Select(s => (Sale: s, SourceDb: "light"));
+
+        IEnumerable<(Sale Sale, string SourceDb)> combinedSource;
+
+        if (string.Equals(query.SourceDb, "dark", StringComparison.OrdinalIgnoreCase))
+        {
+            combinedSource = taggedAdminSales;
+        }
+        else if (string.Equals(query.SourceDb, "light", StringComparison.OrdinalIgnoreCase))
+        {
+            combinedSource = taggedNormalSales;
+        }
+        else
+        {
+            // Combine both, deduplicating by ID (preferring dark if a sale was shifted)
+            var seenIds = new HashSet<Guid>();
+            var merged = new List<(Sale Sale, string SourceDb)>();
+
+            foreach (var item in taggedAdminSales)
+            {
+                if (seenIds.Add(item.Sale.Id))
+                {
+                    merged.Add(item);
+                }
+            }
+
+            foreach (var item in taggedNormalSales)
+            {
+                if (seenIds.Add(item.Sale.Id))
+                {
+                    merged.Add(item);
+                }
+            }
+
+            combinedSource = merged;
+        }
+
+        var sortedCombined = combinedSource
+            .OrderByDescending(x => x.Sale.SaleDate)
             .ToList();
 
-        var totalCombinedCount = combinedSales.Count;
+        var totalCombinedCount = sortedCombined.Count;
 
-        var pageSalesList = combinedSales
+        var pageSalesList = sortedCombined
             .Skip((query.Page - 1) * query.PageSize)
             .Take(query.PageSize)
             .ToList();
 
-        var pageCashierIds = pageSalesList.Select(s => s.CashierId).Distinct().ToList();
+        var pageCashierIds = pageSalesList.Select(s => s.Sale.CashierId).Distinct().ToList();
 
         var usersMap = await _db.Users
             .Where(u => pageCashierIds.Contains(u.Id))
             .ToDictionaryAsync(u => u.Id, u => u.FullName);
 
-        var combinedItems = pageSalesList.Select(s => new SaleListItemDto(
-            s.Id,
-            s.SaleNumber,
-            s.Customer?.Name,
-            usersMap.GetValueOrDefault(s.CashierId, "Unknown"),
-            s.TerminalId,
-            s.Terminal?.Name ?? (s.Terminal != null ? $"Counter {s.Terminal.CounterNumber}" : (s.TerminalId.HasValue ? "Counter" : null)),
-            s.SaleDate,
-            s.TotalAmount,
-            s.Status,
-            s.PaymentStatus,
-            s.RefundedAmount)).ToList();
+        var missingCashierIds = pageCashierIds.Where(id => !usersMap.ContainsKey(id)).ToList();
+        if (missingCashierIds.Count > 0)
+        {
+            try
+            {
+                var normalUsers = await normalDb.Users
+                    .Where(u => missingCashierIds.Contains(u.Id))
+                    .ToDictionaryAsync(u => u.Id, u => u.FullName);
+
+                foreach (var kvp in normalUsers)
+                {
+                    usersMap[kvp.Key] = kvp.Value;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Could not load cashiers from Normal DB for sales list.");
+            }
+        }
+
+        var combinedItems = pageSalesList.Select(x =>
+        {
+            var s = x.Sale;
+            return new SaleListItemDto(
+                s.Id,
+                s.SaleNumber,
+                s.Customer?.Name,
+                usersMap.GetValueOrDefault(s.CashierId, "Unknown"),
+                s.TerminalId,
+                s.Terminal?.Name ?? (s.Terminal != null ? $"Counter {s.Terminal.CounterNumber}" : (s.TerminalId.HasValue ? "Counter" : null)),
+                s.SaleDate,
+                s.TotalAmount,
+                s.Status,
+                s.PaymentStatus,
+                s.RefundedAmount,
+                x.SourceDb);
+        }).ToList();
 
         return new PagedResult<SaleListItemDto>
         {

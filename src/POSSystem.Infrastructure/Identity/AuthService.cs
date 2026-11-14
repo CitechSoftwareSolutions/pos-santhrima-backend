@@ -10,19 +10,30 @@ public class AuthService : IAuthService
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly RoleManager<IdentityRole<Guid>> _roleManager;
     private readonly ITokenService _tokenService;
+    private readonly Persistence.IApplicationDbContextFactory _dbFactory;
+    private readonly POSSystem.Application.Common.Interfaces.IDatabaseContextResolver? _dbResolver;
 
     public AuthService(
         UserManager<ApplicationUser> userManager,
         RoleManager<IdentityRole<Guid>> roleManager,
-        ITokenService tokenService)
+        ITokenService tokenService,
+        Persistence.IApplicationDbContextFactory dbFactory,
+        POSSystem.Application.Common.Interfaces.IDatabaseContextResolver? dbResolver = null)
     {
         _userManager = userManager;
         _roleManager = roleManager;
         _tokenService = tokenService;
+        _dbFactory = dbFactory;
+        _dbResolver = dbResolver;
     }
 
     public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
     {
+        if (request.Role == Roles.SuperSuperAdmin)
+        {
+            throw new ValidationAppException("Cannot assign SuperSuperAdmin role.");
+        }
+
         if (!await _roleManager.RoleExistsAsync(request.Role))
         {
             throw new ValidationAppException($"Role '{request.Role}' does not exist.");
@@ -55,7 +66,10 @@ public class AuthService : IAuthService
 
     public async Task<AuthResponse> LoginAsync(LoginRequest request)
     {
-        var user = await _userManager.FindByEmailAsync(request.Email);
+        var identifier = request.Email?.Trim() ?? string.Empty;
+        var user = await _userManager.FindByNameAsync(identifier) 
+                ?? await _userManager.FindByEmailAsync(identifier);
+
         if (user is null || !user.IsActive)
         {
             throw new ValidationAppException("Invalid email or password.");
@@ -77,20 +91,70 @@ public class AuthService : IAuthService
     {
         var users = _userManager.Users.OrderBy(u => u.FullName).ToList();
         var result = new List<UserDto>();
+        var seenIds = new HashSet<Guid>();
 
         foreach (var user in users)
         {
             var roles = await _userManager.GetRolesAsync(user);
+            if (roles.Contains(Roles.SuperSuperAdmin))
+            {
+                continue; // SuperSuperAdmin cannot be seen anywhere within the system
+            }
+            seenIds.Add(user.Id);
             result.Add(new UserDto(user.Id, user.FullName, user.Email!, roles, user.IsActive));
         }
 
-        return result;
+        // If in Admin Mode (SuperSuperAdmin), also merge any users from Normal DB
+        if (_dbResolver != null && _dbResolver.IsAdminMode())
+        {
+            try
+            {
+                using var normalDb = _dbFactory.CreateNormalDbContext();
+                var normalUsers = normalDb.Users.OrderBy(u => u.FullName).ToList();
+                var allRoles = normalDb.Roles.ToList();
+                var allUserRoles = normalDb.UserRoles.ToList();
+
+                var roleIdMap = allRoles.ToDictionary(r => r.Id, r => r.Name ?? string.Empty);
+                var userRolesMap = allUserRoles
+                    .GroupBy(ur => ur.UserId)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g.Select(ur => roleIdMap.GetValueOrDefault(ur.RoleId, string.Empty))
+                              .Where(r => !string.IsNullOrEmpty(r))
+                              .ToList());
+
+                foreach (var nu in normalUsers)
+                {
+                    if (seenIds.Add(nu.Id))
+                    {
+                        var roles = userRolesMap.GetValueOrDefault(nu.Id, new List<string>());
+                        if (roles.Contains(Roles.SuperSuperAdmin))
+                        {
+                            continue;
+                        }
+                        result.Add(new UserDto(nu.Id, nu.FullName, nu.Email!, roles, nu.IsActive));
+                    }
+                }
+            }
+            catch
+            {
+                // Fallback gracefully to current context users
+            }
+        }
+
+        return result.OrderBy(u => u.FullName).ToList();
     }
 
     public async Task SetUserActiveStatusAsync(Guid userId, bool isActive)
     {
         var user = await _userManager.FindByIdAsync(userId.ToString())
             ?? throw new NotFoundException(nameof(ApplicationUser), userId);
+
+        var roles = await _userManager.GetRolesAsync(user);
+        if (roles.Contains(Roles.SuperSuperAdmin))
+        {
+            throw new NotFoundException(nameof(ApplicationUser), userId);
+        }
 
         user.IsActive = isActive;
         await _userManager.UpdateAsync(user);
@@ -108,10 +172,108 @@ public class AuthService : IAuthService
         }
     }
 
-    public async Task<UserDto> UpdateUserAsync(Guid userId, UpdateUserRequest request)
+    public async Task ChangeSuperAdminCredentialsAsync(Guid userId, UpdateCredentialsRequest request)
     {
         var user = await _userManager.FindByIdAsync(userId.ToString())
             ?? throw new NotFoundException(nameof(ApplicationUser), userId);
+
+        var roles = await _userManager.GetRolesAsync(user);
+        if (!roles.Contains(Roles.SuperSuperAdmin))
+        {
+            throw new ValidationAppException("Only SuperSuperAdmin can update these credentials.");
+        }
+
+        var passValid = await _userManager.CheckPasswordAsync(user, request.CurrentPassword);
+        if (!passValid)
+        {
+            throw new ValidationAppException("Current password is incorrect.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.NewUsername))
+        {
+            var newU = request.NewUsername.Trim();
+            var existing = await _userManager.FindByNameAsync(newU);
+            if (existing != null && existing.Id != user.Id)
+            {
+                throw new ConflictException("Username is already in use.");
+            }
+
+            user.UserName = newU;
+            user.NormalizedUserName = newU.ToUpperInvariant();
+            user.Email = $"{newU}@possystem.local";
+            user.NormalizedEmail = user.Email.ToUpperInvariant();
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.NewPassword))
+        {
+            var resetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
+            var resetRes = await _userManager.ResetPasswordAsync(user, resetToken, request.NewPassword);
+            if (!resetRes.Succeeded)
+            {
+                throw new ValidationAppException(BuildErrors(resetRes));
+            }
+        }
+        else
+        {
+            var updateRes = await _userManager.UpdateAsync(user);
+            if (!updateRes.Succeeded)
+            {
+                throw new ValidationAppException(BuildErrors(updateRes));
+            }
+        }
+
+        // Direct synchronization into companion database context to ensure instant dual consistency
+        try
+        {
+            using var normalDb = _dbFactory.CreateNormalDbContext();
+            var normalUser = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                normalDb.Users, u => u.Id == user.Id);
+            if (normalUser != null)
+            {
+                normalUser.UserName = user.UserName;
+                normalUser.NormalizedUserName = user.NormalizedUserName;
+                normalUser.Email = user.Email;
+                normalUser.NormalizedEmail = user.NormalizedEmail;
+                normalUser.PasswordHash = user.PasswordHash;
+                normalUser.SecurityStamp = user.SecurityStamp;
+                await normalDb.SaveChangesAsync();
+            }
+
+            using var adminDb = _dbFactory.CreateAdminDbContext();
+            var adminUser = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                adminDb.Users, u => u.Id == user.Id);
+            if (adminUser != null)
+            {
+                adminUser.UserName = user.UserName;
+                adminUser.NormalizedUserName = user.NormalizedUserName;
+                adminUser.Email = user.Email;
+                adminUser.NormalizedEmail = user.NormalizedEmail;
+                adminUser.PasswordHash = user.PasswordHash;
+                adminUser.SecurityStamp = user.SecurityStamp;
+                await adminDb.SaveChangesAsync();
+            }
+        }
+        catch (Exception)
+        {
+            // Fallback: Interceptor also auto-replicates
+        }
+    }
+
+    public async Task<UserDto> UpdateUserAsync(Guid userId, UpdateUserRequest request)
+    {
+        if (request.Role == Roles.SuperSuperAdmin)
+        {
+            throw new ValidationAppException("Cannot assign SuperSuperAdmin role.");
+        }
+
+        var user = await _userManager.FindByIdAsync(userId.ToString())
+            ?? throw new NotFoundException(nameof(ApplicationUser), userId);
+
+        var roles = await _userManager.GetRolesAsync(user);
+        if (roles.Contains(Roles.SuperSuperAdmin))
+        {
+            throw new NotFoundException(nameof(ApplicationUser), userId);
+        }
 
         if (!await _roleManager.RoleExistsAsync(request.Role))
         {
@@ -166,6 +328,11 @@ public class AuthService : IAuthService
             ?? throw new NotFoundException(nameof(ApplicationUser), userId);
 
         var roles = await _userManager.GetRolesAsync(user);
+        if (roles.Contains(Roles.SuperSuperAdmin))
+        {
+            throw new NotFoundException(nameof(ApplicationUser), userId);
+        }
+
         if (roles.Contains(Roles.Admin))
         {
             var adminUsers = await _userManager.GetUsersInRoleAsync(Roles.Admin);

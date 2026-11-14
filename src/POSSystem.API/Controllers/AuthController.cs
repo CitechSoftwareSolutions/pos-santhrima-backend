@@ -69,4 +69,12 @@ public class AuthController : ApiControllerBase
         await _authService.ChangePasswordAsync(CurrentUserId, request);
         return NoContent();
     }
+
+    [HttpPost("super-admin/credentials")]
+    [Authorize(Roles = Roles.SuperSuperAdmin)]
+    public async Task<IActionResult> ChangeSuperAdminCredentials(UpdateCredentialsRequest request)
+    {
+        await _authService.ChangeSuperAdminCredentialsAsync(CurrentUserId, request);
+        return NoContent();
+    }
 }

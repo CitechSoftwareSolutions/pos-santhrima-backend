@@ -23,7 +23,7 @@ public class SettingsController : ApiControllerBase
     }
 
     [HttpPut]
-    [Authorize(Roles = Roles.Admin)]
+    [Authorize(Roles = $"{Roles.Admin},{Roles.SuperSuperAdmin}")]
     public async Task<ActionResult<StoreSettingsDto>> UpdateSettings(
         [FromBody] UpdateStoreSettingsRequest request,
         CancellationToken cancellationToken)
@@ -33,6 +33,7 @@ public class SettingsController : ApiControllerBase
     }
 
     [HttpPost("toggle-sales-shift")]
+    [Authorize(Roles = $"{Roles.Admin},{Roles.SuperSuperAdmin}")]
     public async Task<ActionResult<StoreSettingsDto>> ToggleSalesShift(
         [FromQuery] bool? enabled,
         CancellationToken cancellationToken)

@@ -27,18 +27,28 @@ public class ReportService : IReportService
         _logger = logger;
     }
 
-    private async Task<List<Sale>> GetCombinedSalesAsync(
-        DateTime dateFrom,
-        DateTime dateTo,
+    private async Task<(List<Sale> Combined, List<Sale> AdminSales, List<Sale> NormalSales)> GetCombinedSalesDetailedAsync(
+        DateTime? dateFrom,
+        DateTime? dateTo,
         bool includeItems = false,
         bool includeTerminal = false)
     {
-        (dateFrom, dateTo) = (dateFrom.AsUtc(), dateTo.AsUtc());
-
         IQueryable<Sale> QuerySales(ApplicationDbContext context)
         {
             var q = context.Sales.AsNoTracking()
-                .Where(s => s.SaleDate >= dateFrom && s.SaleDate <= dateTo && s.Status != SaleStatus.Cancelled);
+                .Where(s => s.Status != SaleStatus.Cancelled);
+
+            if (dateFrom.HasValue)
+            {
+                var utcFrom = dateFrom.Value.AsUtc();
+                q = q.Where(s => s.SaleDate >= utcFrom);
+            }
+
+            if (dateTo.HasValue)
+            {
+                var utcTo = dateTo.Value.AsUtc();
+                q = q.Where(s => s.SaleDate <= utcTo);
+            }
 
             if (includeItems)
             {
@@ -57,26 +67,28 @@ public class ReportService : IReportService
 
         if (!_dbResolver.IsAdminMode())
         {
-            return activeSales;
+            return (activeSales, new List<Sale>(), activeSales);
         }
 
-        // In Admin Mode (Dark Mode), combine with sales from Normal DB to show the complete picture
+        // In Admin Mode (SuperSuperAdmin), _db is Admin DB (Dark DB).
+        // Combine with sales from Normal DB (Light DB) to show both together.
+        var adminSales = new List<Sale>(activeSales);
+        var normalSales = new List<Sale>();
+
         try
         {
             using var normalDb = _dbFactory.CreateNormalDbContext();
-            var normalSales = await QuerySales(normalDb).ToListAsync();
+            normalSales = await QuerySales(normalDb).ToListAsync();
 
-            if (normalSales.Count == 0)
+            if (normalSales.Count > 0)
             {
-                return activeSales;
-            }
-
-            var activeIds = new HashSet<Guid>(activeSales.Select(s => s.Id));
-            foreach (var ns in normalSales)
-            {
-                if (activeIds.Add(ns.Id))
+                var activeIds = new HashSet<Guid>(activeSales.Select(s => s.Id));
+                foreach (var ns in normalSales)
                 {
-                    activeSales.Add(ns);
+                    if (activeIds.Add(ns.Id))
+                    {
+                        activeSales.Add(ns);
+                    }
                 }
             }
         }
@@ -85,14 +97,22 @@ public class ReportService : IReportService
             _logger.LogWarning(ex, "Could not load sales from Normal DB to combine into admin dashboard report.");
         }
 
-        return activeSales;
+        return (activeSales, adminSales, normalSales);
     }
 
-    public async Task<SalesSummaryDto> GetSalesSummaryAsync(DateTime dateFrom, DateTime dateTo)
+    private async Task<List<Sale>> GetCombinedSalesAsync(
+        DateTime? dateFrom,
+        DateTime? dateTo,
+        bool includeItems = false,
+        bool includeTerminal = false)
     {
-        (dateFrom, dateTo) = (dateFrom.AsUtc(), dateTo.AsUtc());
+        var (combined, _, _) = await GetCombinedSalesDetailedAsync(dateFrom, dateTo, includeItems, includeTerminal);
+        return combined;
+    }
 
-        var sales = await GetCombinedSalesAsync(dateFrom, dateTo);
+    public async Task<SalesSummaryDto> GetSalesSummaryAsync(DateTime? dateFrom, DateTime? dateTo)
+    {
+        var (sales, adminSales, normalSales) = await GetCombinedSalesDetailedAsync(dateFrom, dateTo);
 
         // Sales that are not fully refunded count towards active transactions
         var totalSales = sales.Count(s => s.Status != SaleStatus.Refunded);
@@ -103,10 +123,35 @@ public class ReportService : IReportService
         var netRevenue = sales.Sum(s => Math.Max(0, s.TotalAmount - s.RefundedAmount));
         var averageSaleValue = totalSales == 0 ? 0 : netRevenue / totalSales;
 
-        return new SalesSummaryDto(dateFrom, dateTo, totalSales, grossRevenue, totalDiscount, totalTax, netRevenue, averageSaleValue);
+        int? darkSalesCount = null;
+        decimal? darkRevenue = null;
+        int? lightSalesCount = null;
+        decimal? lightRevenue = null;
+
+        if (_dbResolver.IsAdminMode())
+        {
+            darkSalesCount = adminSales.Count(s => s.Status != SaleStatus.Refunded);
+            darkRevenue = adminSales.Sum(s => Math.Max(0, s.TotalAmount - s.RefundedAmount));
+            lightSalesCount = normalSales.Count(s => s.Status != SaleStatus.Refunded);
+            lightRevenue = normalSales.Sum(s => Math.Max(0, s.TotalAmount - s.RefundedAmount));
+        }
+
+        return new SalesSummaryDto(
+            dateFrom,
+            dateTo,
+            totalSales,
+            grossRevenue,
+            totalDiscount,
+            totalTax,
+            netRevenue,
+            averageSaleValue,
+            darkSalesCount,
+            darkRevenue,
+            lightSalesCount,
+            lightRevenue);
     }
 
-    public async Task<List<DailySalesDto>> GetDailySalesAsync(DateTime dateFrom, DateTime dateTo)
+    public async Task<List<DailySalesDto>> GetDailySalesAsync(DateTime? dateFrom, DateTime? dateTo)
     {
         var sales = await GetCombinedSalesAsync(dateFrom, dateTo);
 
@@ -120,7 +165,7 @@ public class ReportService : IReportService
             .ToList();
     }
 
-    public async Task<List<TopProductDto>> GetTopProductsAsync(DateTime dateFrom, DateTime dateTo, int take = 10)
+    public async Task<List<TopProductDto>> GetTopProductsAsync(DateTime? dateFrom, DateTime? dateTo, int take = 10)
     {
         var sales = await GetCombinedSalesAsync(dateFrom, dateTo, includeItems: true);
 
@@ -166,14 +211,28 @@ public class ReportService : IReportService
         return new InventoryValuationDto(totalProducts, totalUnits, totalCostValue, totalRetailValue);
     }
 
-    public async Task<List<PaymentMethodBreakdownDto>> GetPaymentMethodBreakdownAsync(DateTime dateFrom, DateTime dateTo)
+    public async Task<List<PaymentMethodBreakdownDto>> GetPaymentMethodBreakdownAsync(DateTime? dateFrom, DateTime? dateTo)
     {
-        (dateFrom, dateTo) = (dateFrom.AsUtc(), dateTo.AsUtc());
-
-        IQueryable<Payment> QueryPayments(ApplicationDbContext context) =>
-            context.Payments.AsNoTracking()
+        IQueryable<Payment> QueryPayments(ApplicationDbContext context)
+        {
+            var q = context.Payments.AsNoTracking()
                 .Include(p => p.Sale)
-                .Where(p => p.Sale.SaleDate >= dateFrom && p.Sale.SaleDate <= dateTo && p.Sale.Status != SaleStatus.Cancelled);
+                .Where(p => p.Sale.Status != SaleStatus.Cancelled);
+
+            if (dateFrom.HasValue)
+            {
+                var utcFrom = dateFrom.Value.AsUtc();
+                q = q.Where(p => p.Sale.SaleDate >= utcFrom);
+            }
+
+            if (dateTo.HasValue)
+            {
+                var utcTo = dateTo.Value.AsUtc();
+                q = q.Where(p => p.Sale.SaleDate <= utcTo);
+            }
+
+            return q;
+        }
 
         var payments = await QueryPayments(_db).ToListAsync();
 
@@ -209,7 +268,7 @@ public class ReportService : IReportService
             .ToList();
     }
 
-    public async Task<List<CashierSalesDto>> GetCashierSalesAsync(DateTime dateFrom, DateTime dateTo)
+    public async Task<List<CashierSalesDto>> GetCashierSalesAsync(DateTime? dateFrom, DateTime? dateTo)
     {
         var sales = await GetCombinedSalesAsync(dateFrom, dateTo, includeTerminal: true);
 
@@ -218,6 +277,29 @@ public class ReportService : IReportService
         var users = await _db.Users.AsNoTracking()
             .Where(u => cashierIds.Contains(u.Id))
             .ToDictionaryAsync(u => u.Id);
+
+        if (_dbResolver.IsAdminMode())
+        {
+            var missingCashierIds = cashierIds.Where(id => !users.ContainsKey(id)).ToList();
+            if (missingCashierIds.Count > 0)
+            {
+                try
+                {
+                    using var normalDb = _dbFactory.CreateNormalDbContext();
+                    var normalUsers = await normalDb.Users.AsNoTracking()
+                        .Where(u => missingCashierIds.Contains(u.Id))
+                        .ToDictionaryAsync(u => u.Id);
+                    foreach (var kvp in normalUsers)
+                    {
+                        users[kvp.Key] = kvp.Value;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not load users from Normal DB for cashier sales.");
+                }
+            }
+        }
 
         return sales
             .GroupBy(s => s.CashierId)
@@ -254,7 +336,7 @@ public class ReportService : IReportService
             .ToList();
     }
 
-    public async Task<List<CounterSalesDto>> GetCounterSalesAsync(DateTime dateFrom, DateTime dateTo)
+    public async Task<List<CounterSalesDto>> GetCounterSalesAsync(DateTime? dateFrom, DateTime? dateTo)
     {
         var sales = await GetCombinedSalesAsync(dateFrom, dateTo, includeTerminal: true);
 
@@ -263,6 +345,29 @@ public class ReportService : IReportService
         var users = await _db.Users.AsNoTracking()
             .Where(u => cashierIds.Contains(u.Id))
             .ToDictionaryAsync(u => u.Id);
+
+        if (_dbResolver.IsAdminMode())
+        {
+            var missingCashierIds = cashierIds.Where(id => !users.ContainsKey(id)).ToList();
+            if (missingCashierIds.Count > 0)
+            {
+                try
+                {
+                    using var normalDb = _dbFactory.CreateNormalDbContext();
+                    var normalUsers = await normalDb.Users.AsNoTracking()
+                        .Where(u => missingCashierIds.Contains(u.Id))
+                        .ToDictionaryAsync(u => u.Id);
+                    foreach (var kvp in normalUsers)
+                    {
+                        users[kvp.Key] = kvp.Value;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not load users from Normal DB for counter sales.");
+                }
+            }
+        }
 
         return sales
             .GroupBy(s => s.TerminalId)
