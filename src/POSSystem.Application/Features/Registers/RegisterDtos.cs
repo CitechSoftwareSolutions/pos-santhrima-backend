@@ -38,7 +38,8 @@ public record CounterDailySummaryDto(
     decimal TotalDiscount,
     decimal TotalTax,
     decimal TotalRevenue,
-    List<PaymentMethodSummaryDto> PaymentMethods
+    List<PaymentMethodSummaryDto> PaymentMethods,
+    List<string>? Promotions = null
 );
 
 public interface IRegisterService

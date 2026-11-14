@@ -339,6 +339,7 @@ public class RegisterService : IRegisterService
         IQueryable<Sale> CreateSaleQuery(ApplicationDbContext context) =>
             context.Sales.AsNoTracking()
                 .Include(s => s.Payments)
+                .Include(s => s.Items)
                 .Where(s => s.TerminalId == terminalId &&
                             (cashierId == Guid.Empty || s.CashierId == cashierId) &&
                             s.SaleDate >= dateFrom &&
@@ -403,6 +404,18 @@ public class RegisterService : IRegisterService
             ));
         }
 
+        var promotionRecords = sales
+            .SelectMany(s => s.Items)
+            .Where(i => i.FreeQuantity > 0 || !string.IsNullOrWhiteSpace(i.PromotionName))
+            .GroupBy(i => new { i.ProductName, Promo = !string.IsNullOrWhiteSpace(i.PromotionName) ? i.PromotionName : "Promotion" })
+            .Select(g =>
+            {
+                var qty = g.Sum(i => i.FreeQuantity > 0 ? i.FreeQuantity : i.Quantity);
+                var formattedQty = (qty % 1 == 0) ? ((long)qty).ToString() : qty.ToString("0.###");
+                return $"{formattedQty}x {g.Key.ProductName} - {g.Key.Promo}";
+            })
+            .ToList();
+
         return new CounterDailySummaryDto(
             terminalId,
             counterNumber,
@@ -416,7 +429,8 @@ public class RegisterService : IRegisterService
             totalDiscount,
             totalTax,
             totalRevenue,
-            paymentMethodBreakdowns
+            paymentMethodBreakdowns,
+            promotionRecords
         );
     }
 

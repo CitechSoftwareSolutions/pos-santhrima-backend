@@ -54,6 +54,7 @@ public class SaleItemConfiguration : IEntityTypeConfiguration<SaleItem>
         builder.Property(i => i.TaxAmount).HasColumnType("numeric(18,2)");
         builder.Property(i => i.LineTotal).HasColumnType("numeric(18,2)");
         builder.Property(i => i.PromotionDiscountAmount).HasColumnType("numeric(18,2)");
+        builder.Property(i => i.FreeQuantity).HasColumnType("numeric(18,3)").HasDefaultValue(0);
         builder.Property(i => i.PromotionName).HasMaxLength(200);
 
         builder.HasOne(i => i.Product)

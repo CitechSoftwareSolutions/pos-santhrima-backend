@@ -383,11 +383,6 @@ public class SaleService : ISaleService
                 throw new BusinessRuleException($"Product '{product.Name}' is not active and cannot be sold.");
             }
 
-            if (product.StockQuantity < itemRequest.Quantity)
-            {
-                throw new BusinessRuleException($"Insufficient stock for '{product.Name}'. Available: {product.StockQuantity}, requested: {itemRequest.Quantity}.");
-            }
-
             if (itemRequest.UnitPrice.HasValue && itemRequest.UnitPrice.Value < 0)
             {
                 throw new ValidationAppException($"Unit price for '{product.Name}' cannot be negative.");
@@ -397,13 +392,36 @@ public class SaleService : ISaleService
                 ?? PriceTierResolver.ResolveUnitPrice(product.Mrp ?? product.RetailPrice, product.PriceTiers, itemRequest.Quantity);
 
             var activePromotion = PromotionCalculator.GetActivePromotion(product.Promotions);
-            var promotionDiscount = activePromotion is null
-                ? 0
-                : PromotionCalculator.CalculateDiscount(activePromotion, itemRequest.Quantity, unitPrice);
+            var evaluation = PromotionCalculator.EvaluatePromotion(activePromotion, product.Name, itemRequest.Quantity, unitPrice);
+            var promotionDiscount = evaluation.DiscountAmount;
+            var freeQuantity = evaluation.FreeQuantity;
+
+            var totalStockNeeded = itemRequest.Quantity + freeQuantity;
+            if (product.StockQuantity < totalStockNeeded)
+            {
+                if (freeQuantity > 0)
+                {
+                    throw new BusinessRuleException($"Insufficient stock for '{product.Name}'. Available: {product.StockQuantity}, required: {totalStockNeeded} ({itemRequest.Quantity} sold + {freeQuantity} free under promotion).");
+                }
+                else
+                {
+                    throw new BusinessRuleException($"Insufficient stock for '{product.Name}'. Available: {product.StockQuantity}, requested: {itemRequest.Quantity}.");
+                }
+            }
+
+            decimal priceDiscount = 0;
+            if (activePromotion?.Type == PromotionType.BuyXGetYFree)
+            {
+                priceDiscount = 0;
+            }
+            else
+            {
+                priceDiscount = promotionDiscount;
+            }
 
             var baseAmount = unitPrice * itemRequest.Quantity;
-            var combinedDiscount = itemRequest.DiscountAmount + promotionDiscount;
-            var taxableAmount = baseAmount - combinedDiscount;
+            var combinedDiscount = itemRequest.DiscountAmount + priceDiscount;
+            var taxableAmount = Math.Max(0, baseAmount - combinedDiscount);
             var taxAmount = Math.Round(taxableAmount * (product.TaxRate / 100m), 2);
             var lineTotal = taxableAmount + taxAmount;
 
@@ -419,18 +437,21 @@ public class SaleService : ISaleService
                 PromotionId = activePromotion?.Id,
                 PromotionName = activePromotion?.Name,
                 PromotionDiscountAmount = promotionDiscount,
+                FreeQuantity = freeQuantity,
             });
 
-            product.StockQuantity -= itemRequest.Quantity;
+            product.StockQuantity -= totalStockNeeded;
             product.UpdatedAt = DateTime.UtcNow;
 
             _db.StockMovements.Add(new StockMovement
             {
                 ProductId = product.Id,
                 Type = StockMovementType.Sale,
-                QuantityChange = -itemRequest.Quantity,
+                QuantityChange = -totalStockNeeded,
                 StockAfter = product.StockQuantity,
-                Reference = sale.SaleNumber,
+                Reference = freeQuantity > 0
+                    ? $"{sale.SaleNumber} ({itemRequest.Quantity} sold + {freeQuantity} free promo)"
+                    : sale.SaleNumber,
                 PerformedByUserId = cashierId,
             });
 
@@ -1138,7 +1159,7 @@ public class SaleService : ISaleService
             sale.Notes,
             sale.Items.Select(i => new SaleItemDto(
                 i.Id, i.ProductId, i.ProductName, i.Quantity, i.UnitPrice, i.DiscountAmount, i.TaxAmount, i.LineTotal,
-                i.PromotionId, i.PromotionName, i.PromotionDiscountAmount, i.ReturnedQuantity)).ToList(),
+                i.PromotionId, i.PromotionName, i.PromotionDiscountAmount, i.ReturnedQuantity, i.FreeQuantity)).ToList(),
             sale.Payments.Select(p => new SalePaymentDto(p.Id, p.Method, p.Amount, p.ReferenceNumber, p.PaymentDate)).ToList(),
             sale.RefundedAmount);
     }
