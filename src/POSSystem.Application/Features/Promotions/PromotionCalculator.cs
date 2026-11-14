@@ -29,7 +29,95 @@ public static class PromotionCalculator
                 promotion.MinQuantity,
                 promotion.DiscountPercent,
                 promotion.BundleQuantity,
-                promotion.BundlePrice);
+                promotion.BundlePrice,
+                promotion.Description);
+    }
+
+    public record PromotionEvaluationResult(
+        bool IsMet,
+        decimal FreeQuantity,
+        decimal DiscountAmount,
+        string Message);
+
+    /// <summary>
+    /// Evaluates whether an active promotion criteria is met for a given line item.
+    /// Returns evaluation result with free items to grant, discount amount, and clear cashier prompt.
+    /// Note: User requested strictly clean text without emojis.
+    /// </summary>
+    public static PromotionEvaluationResult EvaluatePromotion(
+        PromotionSummaryDto? promotion,
+        string productName,
+        decimal quantity,
+        decimal unitPrice)
+    {
+        if (promotion is null || quantity <= 0)
+        {
+            return new PromotionEvaluationResult(false, 0, 0, string.Empty);
+        }
+
+        var promoLabel = string.IsNullOrWhiteSpace(promotion.Description)
+            ? promotion.Name
+            : $"{promotion.Name} - {promotion.Description}";
+
+        switch (promotion.Type)
+        {
+            case PromotionType.BuyXGetYFree:
+            {
+                var buyQty = promotion.BuyQuantity ?? 0;
+                var freeQty = promotion.FreeQuantity ?? 0;
+                if (buyQty <= 0 || freeQty <= 0 || quantity < buyQty)
+                {
+                    return new PromotionEvaluationResult(false, 0, 0, string.Empty);
+                }
+
+                var sets = Math.Floor(quantity / buyQty);
+                var totalFree = sets * freeQty;
+                var discount = totalFree * unitPrice;
+                var msg = $"Give {totalFree} free {productName} under the {promoLabel}";
+
+                return new PromotionEvaluationResult(true, totalFree, discount, msg);
+            }
+
+            case PromotionType.BulkPercentOff:
+            {
+                var minQty = promotion.MinQuantity ?? 0;
+                var percent = promotion.DiscountPercent ?? 0;
+                if (minQty <= 0 || percent <= 0 || quantity < minQty)
+                {
+                    return new PromotionEvaluationResult(false, 0, 0, string.Empty);
+                }
+
+                var discount = Math.Round(quantity * unitPrice * (percent / 100m), 2);
+                var msg = $"{promoLabel}: {percent}% bulk discount applied";
+
+                return new PromotionEvaluationResult(true, 0, discount, msg);
+            }
+
+            case PromotionType.FixedPriceBundle:
+            {
+                var bundleQty = promotion.BundleQuantity ?? 0;
+                var bundlePrice = promotion.BundlePrice ?? 0;
+                if (bundleQty <= 0 || quantity < bundleQty)
+                {
+                    return new PromotionEvaluationResult(false, 0, 0, string.Empty);
+                }
+
+                var numBundles = Math.Floor(quantity / bundleQty);
+                if (numBundles <= 0)
+                {
+                    return new PromotionEvaluationResult(false, 0, 0, string.Empty);
+                }
+
+                var normalPrice = numBundles * bundleQty * unitPrice;
+                var discount = Math.Max(0, normalPrice - (numBundles * bundlePrice));
+                var msg = $"{promoLabel}: Bundle price applied";
+
+                return new PromotionEvaluationResult(true, 0, discount, msg);
+            }
+
+            default:
+                return new PromotionEvaluationResult(false, 0, 0, string.Empty);
+        }
     }
 
     /// <summary>

@@ -21,6 +21,7 @@ public class SaleItem : BaseEntity
     public Promotion? Promotion { get; set; }
     public string? PromotionName { get; set; }
     public decimal PromotionDiscountAmount { get; set; } = 0;
+    public decimal FreeQuantity { get; set; } = 0;
 
     public decimal ReturnedQuantity { get; set; } = 0;
 }

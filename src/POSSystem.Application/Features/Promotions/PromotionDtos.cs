@@ -28,7 +28,8 @@ public record PromotionSummaryDto(
     decimal? MinQuantity,
     decimal? DiscountPercent,
     decimal? BundleQuantity,
-    decimal? BundlePrice);
+    decimal? BundlePrice,
+    string? Description = null);
 
 public record CreatePromotionRequest(
     string Name,

@@ -33,7 +33,8 @@ public record SaleItemDto(
     Guid? PromotionId,
     string? PromotionName,
     decimal PromotionDiscountAmount,
-    decimal ReturnedQuantity = 0);
+    decimal ReturnedQuantity = 0,
+    decimal FreeQuantity = 0);
 
 public record ReturnSaleItemRequest(
     Guid SaleItemId,

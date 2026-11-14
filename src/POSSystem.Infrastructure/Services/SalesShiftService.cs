@@ -310,6 +310,7 @@ public class SalesShiftService : ISalesShiftService
                     PromotionId = item.PromotionId,
                     PromotionName = item.PromotionName,
                     PromotionDiscountAmount = item.PromotionDiscountAmount,
+                    FreeQuantity = item.FreeQuantity,
                     ReturnedQuantity = item.ReturnedQuantity
                 });
             }
