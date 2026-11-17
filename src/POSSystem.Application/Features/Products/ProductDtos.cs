@@ -39,7 +39,9 @@ public record ProductDto(
     List<PriceTierDto> PriceTiers,
     PromotionSummaryDto? ActivePromotion,
     string? Brand = null,
-    decimal? Mrp = null);
+    decimal? Mrp = null,
+    Guid? SupplierId = null,
+    string? SupplierName = null);
 
 public record CreateProductRequest(
     string Sku,
@@ -59,7 +61,8 @@ public record CreateProductRequest(
     string? ImageUrl,
     List<PriceTierRequest>? PriceTiers = null,
     string? Brand = null,
-    decimal? Mrp = null);
+    decimal? Mrp = null,
+    Guid? SupplierId = null);
 
 public record UpdateProductRequest(
     string Sku,
@@ -79,7 +82,8 @@ public record UpdateProductRequest(
     bool IsActive,
     List<PriceTierRequest>? PriceTiers = null,
     string? Brand = null,
-    decimal? Mrp = null);
+    decimal? Mrp = null,
+    Guid? SupplierId = null);
 
 public record AdjustStockRequest(decimal QuantityChange, string? Notes);
 
@@ -89,6 +93,7 @@ public record ProductQueryParams
     public int PageSize { get; set; } = 20;
     public string? Search { get; set; }
     public Guid? CategoryId { get; set; }
+    public Guid? SupplierId { get; set; }
     public bool? IsActive { get; set; }
     public bool LowStockOnly { get; set; } = false;
 }
