@@ -22,6 +22,7 @@ public class ProductService : IProductService
     {
         var products = _db.Products
             .Include(p => p.Category)
+            .Include(p => p.Supplier)
             .Include(p => p.Promotions)
             .Include(p => p.PriceTiers)
             .AsQueryable();
@@ -39,6 +40,11 @@ public class ProductService : IProductService
         if (query.CategoryId.HasValue)
         {
             products = products.Where(p => p.CategoryId == query.CategoryId.Value);
+        }
+
+        if (query.SupplierId.HasValue)
+        {
+            products = products.Where(p => p.SupplierId == query.SupplierId.Value);
         }
 
         if (query.IsActive.HasValue)
@@ -73,6 +79,7 @@ public class ProductService : IProductService
     {
         var product = await _db.Products
             .Include(p => p.Category)
+            .Include(p => p.Supplier)
             .Include(p => p.Promotions)
             .Include(p => p.PriceTiers)
             .FirstOrDefaultAsync(p => p.Id == id)
@@ -88,6 +95,7 @@ public class ProductService : IProductService
 
         var product = await _db.Products
             .Include(p => p.Category)
+            .Include(p => p.Supplier)
             .Include(p => p.Promotions)
             .Include(p => p.PriceTiers)
             .FirstOrDefaultAsync(p => p.Sku == cleanCode || p.Barcode == cleanCode || p.Sku == paddedCode || p.Barcode == paddedCode);
@@ -135,6 +143,7 @@ public class ProductService : IProductService
             StockQuantity = request.InitialStock,
             ReorderLevel = request.ReorderLevel,
             ImageUrl = request.ImageUrl,
+            SupplierId = request.SupplierId,
             Brand = request.Brand?.Trim(),
             PriceTiers = tiers,
         };
@@ -196,6 +205,7 @@ public class ProductService : IProductService
         product.AllowDecimalQuantity = request.AllowDecimalQuantity;
         product.ReorderLevel = request.ReorderLevel;
         product.ImageUrl = request.ImageUrl;
+        product.SupplierId = request.SupplierId;
         product.IsActive = request.IsActive;
         product.UpdatedAt = DateTime.UtcNow;
 
@@ -261,6 +271,7 @@ public class ProductService : IProductService
     {
         return await _db.Products
             .Include(p => p.Category)
+            .Include(p => p.Supplier)
             .Include(p => p.Promotions)
             .Include(p => p.PriceTiers)
             .Where(p => p.IsActive && p.StockQuantity <= p.ReorderLevel)
@@ -336,7 +347,9 @@ public class ProductService : IProductService
             .ToList(),
         PromotionCalculator.GetActivePromotion(p.Promotions),
         p.Brand,
-        p.Mrp ?? p.RetailPrice);
+        p.Mrp ?? p.RetailPrice,
+        p.SupplierId,
+        p.Supplier?.Name);
 
     public async Task<string> GenerateNextSkuAsync(Guid categoryId)
     {

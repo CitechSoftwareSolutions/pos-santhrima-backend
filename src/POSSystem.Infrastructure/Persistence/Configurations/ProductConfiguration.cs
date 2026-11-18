@@ -31,6 +31,12 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
         builder.HasIndex(p => p.Barcode);
         builder.HasIndex(p => p.Name);
         builder.HasIndex(p => p.Brand);
+        builder.HasIndex(p => p.SupplierId);
+
+        builder.HasOne(p => p.Supplier)
+            .WithMany()
+            .HasForeignKey(p => p.SupplierId)
+            .OnDelete(DeleteBehavior.SetNull);
 
         builder.HasOne(p => p.Category)
             .WithMany(c => c.Products)
