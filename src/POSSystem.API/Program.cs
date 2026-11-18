@@ -243,6 +243,8 @@ static async Task EnsureStoreSettingsColumnsAsync(ApplicationDbContext db, ILogg
             ALTER TABLE ""SaleItems"" ADD COLUMN IF NOT EXISTS ""ReturnedQuantity"" numeric NOT NULL DEFAULT 0;
             ALTER TABLE ""SaleItems"" ADD COLUMN IF NOT EXISTS ""FreeQuantity"" numeric NOT NULL DEFAULT 0;
             ALTER TABLE ""Sales"" ADD COLUMN IF NOT EXISTS ""RefundedAmount"" numeric NOT NULL DEFAULT 0;
+            ALTER TABLE ""Products"" ADD COLUMN IF NOT EXISTS ""NameSi"" character varying(200) NULL;
+            CREATE INDEX IF NOT EXISTS ""IX_Products_NameSi"" ON ""Products"" (""NameSi"");
             UPDATE ""Sales"" s
             SET ""RefundedAmount"" = sub.total_refund
             FROM (
