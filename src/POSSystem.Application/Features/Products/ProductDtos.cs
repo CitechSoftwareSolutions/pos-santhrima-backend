@@ -41,7 +41,8 @@ public record ProductDto(
     string? Brand = null,
     decimal? Mrp = null,
     Guid? SupplierId = null,
-    string? SupplierName = null);
+    string? SupplierName = null,
+    string? NameSi = null);
 
 public record CreateProductRequest(
     string Sku,
@@ -62,7 +63,8 @@ public record CreateProductRequest(
     List<PriceTierRequest>? PriceTiers = null,
     string? Brand = null,
     decimal? Mrp = null,
-    Guid? SupplierId = null);
+    Guid? SupplierId = null,
+    string? NameSi = null);
 
 public record UpdateProductRequest(
     string Sku,
@@ -83,7 +85,8 @@ public record UpdateProductRequest(
     List<PriceTierRequest>? PriceTiers = null,
     string? Brand = null,
     decimal? Mrp = null,
-    Guid? SupplierId = null);
+    Guid? SupplierId = null,
+    string? NameSi = null);
 
 public record AdjustStockRequest(decimal QuantityChange, string? Notes);
 

@@ -32,6 +32,7 @@ public class ProductService : IProductService
             var term = query.Search.Trim().ToLower();
             products = products.Where(p =>
                 p.Name.ToLower().Contains(term) ||
+                (p.NameSi != null && p.NameSi.ToLower().Contains(term)) ||
                 p.Sku.ToLower().Contains(term) ||
                 (p.Barcode != null && p.Barcode.ToLower().Contains(term)) ||
                 (p.Brand != null && p.Brand.ToLower().Contains(term)));
@@ -130,6 +131,7 @@ public class ProductService : IProductService
             Sku = request.Sku,
             Barcode = request.Barcode,
             Name = request.Name,
+            NameSi = request.NameSi?.Trim(),
             Description = request.Description,
             CategoryId = request.CategoryId,
             CostPrice = request.CostPrice,
@@ -192,6 +194,7 @@ public class ProductService : IProductService
         product.Sku = request.Sku;
         product.Barcode = request.Barcode;
         product.Name = request.Name;
+        product.NameSi = request.NameSi?.Trim();
         product.Description = request.Description;
         product.Brand = request.Brand?.Trim();
         product.CategoryId = request.CategoryId;
@@ -349,7 +352,8 @@ public class ProductService : IProductService
         p.Brand,
         p.Mrp ?? p.RetailPrice,
         p.SupplierId,
-        p.Supplier?.Name);
+        p.Supplier?.Name,
+        p.NameSi);
 
     public async Task<string> GenerateNextSkuAsync(Guid categoryId)
     {
